@@ -41,7 +41,7 @@ const obPut = op => run('outbox', 'readwrite', s => s.put(op));
 const obDel = id => run('outbox', 'readwrite', s => s.delete(id));
 
 /* ---------- Būsena ---------- */
-const S = { auth: null, data: null, view: 'login', cur: null, pending: [], syncing: false, err: '', q: '', filter: '', tmpmap: {} };
+const S = { auth: null, data: null, view: 'login', cur: null, pending: [], syncing: false, err: '', q: '', filter: '', tmpmap: {}, tiv: null, finArmed: false };
 
 /* ---------- Pagalbinės ---------- */
 function sc(st) {
@@ -145,6 +145,7 @@ async function logout(msg) {
 
 /* ---------- Navigacija ir piešimas ---------- */
 function go(view, cur) {
+  clearInterval(S.tiv); S.tiv = null; S.finArmed = false;
   S.view = view; S.cur = cur || null;
   say('');
   render();
@@ -236,7 +237,8 @@ function renderList() {
     for (const w of words) { if (hay.indexOf(w) < 0) return; }
     n++;
     out += '<div class="card tap s-' + c + (it.tmp ? ' tmp' : '') + '" data-act="open" data-k="' + esc(it.tmpId || it.nr) + '">' +
-      '<div class="top"><div class="nr">' + esc(it.tmp ? '⏳ Nauja' : it.nr) + ' · ' + esc(it.klientas) + '</div>' + chip(it.statusas) + '</div>' +
+      '<div class="top"><div class="nr">' + esc(it.tmp ? '⏳ Nauja' : it.nr) + ' · ' + esc(it.klientas) + '</div>' +
+      '<div class="chipset">' + runChip(it) + chip(it.statusas) + '</div></div>' +
       '<div class="dev">' + esc(it.irenginys) + '</div>' +
       (it.serija ? '<div class="muted">' + esc(it.serija) + '</div>' : '') + '</div>';
   });
@@ -271,12 +273,172 @@ function renderDetail() {
       (it.komentarai ? '<div class="pre"><b>Komentarai:</b>\n' + esc(it.komentarai) + '</div>' : '') +
     '</div>' +
     '<label>Kas rašo</label><select id="mech">' + optList(names, lsGet('mech')) + '</select>' +
+    (S.data.timer && !it.tmp ? timerBox() : '') +
     '<label>Komentaras</label><textarea id="c" placeholder="Ką atlikta / kas rasta..."></textarea>' +
     '<label>Naujas statusas</label><select id="st">' + optList(S.data.statuses, '', 'Nekeisti') + '</select>' +
     '<label>Nuotraukos (nebūtina)</label><input id="ph" type="file" accept="image/*" multiple>' +
     '<div id="phi" class="muted"></div>' +
     '<button data-act="save">Išsaugoti</button>' +
     '<button class="sec" data-act="nav" data-v="list">Atgal į sąrašą</button>';
+
+  if (S.data.timer && !it.tmp) {
+    tPaint(it.timer);
+    if (navigator.onLine) {
+      const nr = it.nr;
+      post({ pin: S.auth.pin, action: 'timerState', nr })
+        .then(j => { if (j.ok && S.view === 'detail' && S.cur === nr) { it.timer = j.timer; tPaint(j.timer); } })
+        .catch(() => {});
+    }
+  }
+}
+
+/* ---------- Darbo laikmatis ---------- */
+const runChip = it => (it.timer && it.timer.running)
+  ? '<span class="chip c-run">⏱ ' + esc(it.timer.running.mech) + '</span>' : '';
+
+function timerBox() {
+  const reasons = (S.data.pauseReasons || []);
+  return '<div id="tbox" class="card timer">' +
+    '<div class="top"><div class="nr">Darbo laikas</div><span id="tst" class="chip c-off">Nepradėta</span></div>' +
+    '<div id="tclk" class="clock">0:00:00</div>' +
+    '<div id="tinf" class="muted"></div>' +
+    '<button id="tgo" data-act="tstart">▶ Pradėti darbą</button>' +
+    '<div id="trun" class="row2 hidden">' +
+      '<button class="pause" data-act="tpause">⏸ Sustabdyti</button>' +
+      '<button id="tfin" class="finish" data-act="tfinish">✔ Baigti darbą</button>' +
+    '</div>' +
+    '<div id="tpz" class="hidden">' +
+      '<label>Kodėl stabdote? <span class="req">*</span></label>' +
+      '<select id="trs">' + optList(reasons, '', '— pasirinkite —') + '</select>' +
+      '<input id="tot" class="hidden" placeholder="Įrašykite priežastį" style="margin-top:8px">' +
+      '<button class="pause" data-act="tpauseok">Patvirtinti sustabdymą</button>' +
+      '<button class="sec" data-act="tpausecancel">Atšaukti</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function fmtDur(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return Math.floor(s / 3600) + ':' + pad(Math.floor(s % 3600 / 60)) + ':' + pad(s % 60);
+}
+function fmtMin(min) { return Math.floor(min / 60) + ' val. ' + Math.round(min % 60) + ' min.'; }
+
+function tPaint(st) {
+  if (!$('#tbox')) return;
+  st = st || { totalMin: 0, running: null, lastReason: '' };
+  clearInterval(S.tiv); S.tiv = null;
+  S.finArmed = false;
+  const run = !!st.running;
+  $('#tfin').textContent = '✔ Baigti darbą';
+  $('#tpz').classList.add('hidden');
+  $('#tgo').classList.toggle('hidden', run);
+  $('#tgo').textContent = st.totalMin ? '▶ Tęsti darbą' : '▶ Pradėti darbą';
+  $('#trun').classList.toggle('hidden', !run);
+  const tst = $('#tst');
+  tst.className = 'chip ' + (run ? 'c-run' : 'c-off');
+  tst.textContent = run ? 'Dirbama · ' + st.running.mech : (st.totalMin ? 'Sustabdyta' : 'Nepradėta');
+  $('#tinf').textContent = (!run && st.lastReason) ? 'Paskutinė pauzė: ' + st.lastReason : '';
+  const base = (st.totalMin || 0) * 60000;
+  const tick = () => { const c = $('#tclk'); if (c) c.textContent = fmtDur(base + (run ? Date.now() - st.running.start : 0)); };
+  tick();
+  if (run) S.tiv = setInterval(tick, 1000);
+}
+
+function tBusy(b) { $$('#tbox button').forEach(x => { x.disabled = b; }); }
+
+/** Laikmačio užklausa – reikia interneto (laikas fiksuojamas serveryje). */
+async function tCall(body) {
+  if (!navigator.onLine) throw new Error('Laikmačiui reikia interneto ryšio.');
+  const j = await post(Object.assign({ pin: S.auth.pin, opId: uid() }, body));
+  if (!j.ok) {
+    if (j.auth) { await logout('PIN nebegalioja. Prisijunkite iš naujo.'); throw new Error(j.error || 'Neteisingas PIN.'); }
+    throw new Error(j.error || 'Klaida');
+  }
+  return j;
+}
+
+function setStatus(it, idx) {
+  const all = S.data.allStatuses || [];
+  if (all[idx]) it.statusas = all[idx];
+}
+
+async function tStart() {
+  const it = findItem(S.cur);
+  if (!it) return;
+  const mech = $('#mech').value;
+  if (!mech) { toast('Pasirinkite, kas dirba.', 'err'); return; }
+  lsSet('mech', mech);
+  tBusy(true);
+  try {
+    const j = await tCall({ action: 'timerStart', nr: it.nr, mech });
+    it.timer = j.timer;
+    setStatus(it, 1); // Darbas atliekamas
+    await kvSet('data', S.data);
+    toast('Darbas pradėtas: ' + it.nr);
+    renderDetail();
+  } catch (e) {
+    toast(e.message || String(e), 'err');
+  } finally { tBusy(false); }
+}
+
+function tPauseAsk() {
+  $('#trs').value = '';
+  $('#tot').value = '';
+  $('#tot').classList.add('hidden');
+  $('#trun').classList.add('hidden');
+  $('#tpz').classList.remove('hidden');
+}
+
+function tPauseCancel() {
+  $('#tpz').classList.add('hidden');
+  $('#trun').classList.remove('hidden');
+}
+
+async function tPause() {
+  const it = findItem(S.cur);
+  if (!it) return;
+  let r = $('#trs').value;
+  if (!r) { toast('Pasirinkite sustabdymo priežastį.', 'err'); return; }
+  if (/^kita/i.test(r)) {
+    const o = $('#tot').value.trim();
+    if (!o) { toast('Įrašykite, kodėl stabdote.', 'err'); return; }
+    r = 'Kita: ' + o;
+  }
+  tBusy(true);
+  try {
+    const j = await tCall({ action: 'timerStop', nr: it.nr, finish: false, reason: r });
+    it.timer = j.timer;
+    if (/^laukia dali/i.test(r)) setStatus(it, 2); // Laukia dalių
+    await kvSet('data', S.data);
+    toast('Sustabdyta: ' + r);
+    renderDetail();
+  } catch (e) {
+    toast(e.message || String(e), 'err');
+  } finally { tBusy(false); }
+}
+
+async function tFinish() {
+  const it = findItem(S.cur);
+  if (!it) return;
+  if (!S.finArmed) {
+    S.finArmed = true;
+    $('#tfin').textContent = 'Spauskite dar kartą';
+    setTimeout(() => { S.finArmed = false; const b = $('#tfin'); if (b) b.textContent = '✔ Baigti darbą'; }, 4000);
+    return;
+  }
+  tBusy(true);
+  try {
+    const j = await tCall({ action: 'timerStop', nr: it.nr, finish: true });
+    it.timer = j.timer;
+    setStatus(it, 3); // Darbas atliktas
+    await kvSet('data', S.data);
+    toast('Darbas baigtas: ' + it.nr + ' (' + fmtMin(j.timer.totalMin || 0) + ')');
+    go('list');
+    refreshData().then(() => refreshUi()).catch(() => {});
+  } catch (e) {
+    toast(e.message || String(e), 'err');
+    tBusy(false);
+  }
 }
 
 function shrink(file) {
@@ -520,6 +682,11 @@ document.addEventListener('click', async ev => {
   if (act === 'filter') { S.filter = el.getAttribute('data-f'); $$('.fchip').forEach(c => c.classList.toggle('on', c.getAttribute('data-f') === S.filter)); return renderList(); }
   if (act === 'save') return saveDetail(el);
   if (act === 'submitnew') return submitNew(el);
+  if (act === 'tstart') return tStart();
+  if (act === 'tpause') return tPauseAsk();
+  if (act === 'tpauseok') return tPause();
+  if (act === 'tpausecancel') return tPauseCancel();
+  if (act === 'tfinish') return tFinish();
   if (act === 'sync') { S.err = ''; await sync(); if (!S.err) toast('Sinchronizuota.'); else toast(S.err, 'err'); return; }
   if (act === 'rm') {
     if (!confirm('Pašalinti šį neišsiųstą įrašą? Jo duomenys bus prarasti.')) return;
@@ -542,6 +709,10 @@ document.addEventListener('input', ev => {
   if (ev.target.id === 'q') { S.q = ev.target.value; renderList(); }
 });
 document.addEventListener('change', ev => {
+  if (ev.target.id === 'trs') {
+    $('#tot').classList.toggle('hidden', !/^kita/i.test(ev.target.value));
+    return;
+  }
   if (ev.target.id === 'ph') {
     const n = ev.target.files ? ev.target.files.length : 0;
     $('#phi').textContent = n ? 'Pasirinkta nuotraukų: ' + n : '';
