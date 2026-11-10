@@ -362,23 +362,46 @@ function setStatus(it, idx) {
   if (all[idx]) it.statusas = all[idx];
 }
 
-async function tStart() {
+/**
+ * Greitas atsakas: ekranas atnaujinamas iš karto, o užklausa siunčiama fone.
+ * Užklausos siunčiamos eilės tvarka; nepavykus – grąžinama ankstesnė būsena.
+ */
+function tSend(it, body, prevTimer, prevStatus, okMsg) {
+  const nr = it.nr;
+  S.tq = (S.tq || Promise.resolve()).then(async () => {
+    try {
+      const j = await tCall(body);
+      it.timer = j.timer;
+      await kvSet('data', S.data);
+      if (S.view === 'detail' && S.cur === nr) tPaint(j.timer);
+      if (S.view === 'list') renderList();
+      if (okMsg) toast(okMsg);
+    } catch (e) {
+      it.timer = prevTimer;
+      it.statusas = prevStatus;
+      await kvSet('data', S.data);
+      if (S.view === 'detail' && S.cur === nr) renderDetail();
+      if (S.view === 'list') renderList();
+      toast('Neišsaugota: ' + (e.message || String(e)), 'err');
+    }
+  });
+  return S.tq;
+}
+
+function tStart() {
   const it = findItem(S.cur);
   if (!it) return;
+  if (!navigator.onLine) { toast('Laikmačiui reikia interneto ryšio.', 'err'); return; }
   const mech = $('#mech').value;
   if (!mech) { toast('Pasirinkite, kas dirba.', 'err'); return; }
   lsSet('mech', mech);
-  tBusy(true);
-  try {
-    const j = await tCall({ action: 'timerStart', nr: it.nr, mech });
-    it.timer = j.timer;
-    setStatus(it, 1); // Darbas atliekamas
-    await kvSet('data', S.data);
-    toast('Darbas pradėtas: ' + it.nr);
-    renderDetail();
-  } catch (e) {
-    toast(e.message || String(e), 'err');
-  } finally { tBusy(false); }
+  const prevTimer = it.timer, prevStatus = it.statusas;
+  const total = (prevTimer && prevTimer.totalMin) || 0;
+  it.timer = { nr: it.nr, running: { mech, start: Date.now() }, totalMin: total, lastReason: '' };
+  setStatus(it, 1); // Darbas atliekamas
+  renderDetail();
+  toast('Darbas pradėtas: ' + it.nr);
+  tSend(it, { action: 'timerStart', nr: it.nr, mech }, prevTimer, prevStatus, '');
 }
 
 function tPauseAsk() {
@@ -394,7 +417,14 @@ function tPauseCancel() {
   $('#trun').classList.remove('hidden');
 }
 
-async function tPause() {
+/** Vietinis laiko priskaičiavimas, kol atsakys serveris. */
+function localStop(t, reason) {
+  const run = t && t.running;
+  const add = run ? Math.max(0, Math.round((Date.now() - run.start) / 60000)) : 0;
+  return { nr: t ? t.nr : '', running: null, totalMin: ((t && t.totalMin) || 0) + add, lastReason: reason || '' };
+}
+
+function tPause() {
   const it = findItem(S.cur);
   if (!it) return;
   let r = $('#trs').value;
@@ -404,20 +434,16 @@ async function tPause() {
     if (!o) { toast('Įrašykite, kodėl stabdote.', 'err'); return; }
     r = 'Kita: ' + o;
   }
-  tBusy(true);
-  try {
-    const j = await tCall({ action: 'timerStop', nr: it.nr, finish: false, reason: r });
-    it.timer = j.timer;
-    if (/^laukia dali/i.test(r)) setStatus(it, 2); // Laukia dalių
-    await kvSet('data', S.data);
-    toast('Sustabdyta: ' + r);
-    renderDetail();
-  } catch (e) {
-    toast(e.message || String(e), 'err');
-  } finally { tBusy(false); }
+  if (!navigator.onLine) { toast('Laikmačiui reikia interneto ryšio.', 'err'); return; }
+  const prevTimer = it.timer, prevStatus = it.statusas;
+  it.timer = localStop(prevTimer, r);
+  if (/^laukia dali/i.test(r)) setStatus(it, 2); // Laukia dalių
+  renderDetail();
+  toast('Sustabdyta: ' + r);
+  tSend(it, { action: 'timerStop', nr: it.nr, finish: false, reason: r }, prevTimer, prevStatus, '');
 }
 
-async function tFinish() {
+function tFinish() {
   const it = findItem(S.cur);
   if (!it) return;
   if (!S.finArmed) {
@@ -426,19 +452,14 @@ async function tFinish() {
     setTimeout(() => { S.finArmed = false; const b = $('#tfin'); if (b) b.textContent = '✔ Baigti darbą'; }, 4000);
     return;
   }
-  tBusy(true);
-  try {
-    const j = await tCall({ action: 'timerStop', nr: it.nr, finish: true });
-    it.timer = j.timer;
-    setStatus(it, 3); // Darbas atliktas
-    await kvSet('data', S.data);
-    toast('Darbas baigtas: ' + it.nr + ' (' + fmtMin(j.timer.totalMin || 0) + ')');
-    go('list');
-    refreshData().then(() => refreshUi()).catch(() => {});
-  } catch (e) {
-    toast(e.message || String(e), 'err');
-    tBusy(false);
-  }
+  if (!navigator.onLine) { toast('Laikmačiui reikia interneto ryšio.', 'err'); return; }
+  const prevTimer = it.timer, prevStatus = it.statusas;
+  it.timer = localStop(prevTimer, '');
+  setStatus(it, 3); // Darbas atliktas
+  toast('Darbas baigtas: ' + it.nr + ' (' + fmtMin(it.timer.totalMin) + ')');
+  go('list');
+  tSend(it, { action: 'timerStop', nr: it.nr, finish: true }, prevTimer, prevStatus, '')
+    .then(() => refreshData()).then(() => refreshUi()).catch(() => {});
 }
 
 function shrink(file) {
