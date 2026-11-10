@@ -59,3 +59,12 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 .op{border-left-color:var(--line)}
 .op.failed{border-left-color:#d92d20}
 .err-t{color:#d92d20;font-size:13px;margin-top:4px}
+/* Darbo laikmatis */
+.chipset{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.c-run{background:#dcfce7;color:#166534}.c-off{background:#eceff3;color:#4b5563}
+@media (prefers-color-scheme:dark){.c-run{background:#123a24;color:#86efac}.c-off{background:#2a3038;color:#c3cad4}}
+.card.timer{border-left-color:#16a34a;margin-top:12px}
+.clock{font-size:36px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:1px;margin:8px 0 2px}
+.row2{display:flex;gap:8px}.row2 button{flex:1}
+button.pause{background:#f59e0b;color:#1a1d24}
+button.finish{background:#16a34a;color:#fff}
