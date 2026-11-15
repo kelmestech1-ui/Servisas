@@ -379,6 +379,37 @@ async function saveDetail(btn) {
 }
 
 /* ---------- Naujas priėmimas ---------- */
+/* ---------- Esamo kliento paieška ---------- */
+function normPhone(p) {
+  let d = String(p || '').replace(/\D/g, '');
+  if (d.indexOf('00') === 0) d = d.substring(2);
+  if (d.length === 9 && d.charAt(0) === '8') d = '370' + d.substring(1);
+  else if (d.length === 8 && d.charAt(0) === '6') d = '370' + d;
+  return d;
+}
+
+/** Užpildo kliento laukus, jei rastas klientas (pagal telefoną arba tikslų vardą). */
+function clientLookup(by) {
+  const list = S.data.clients || [];
+  if (!list.length) return;
+  const f = k => $('[data-f="' + k + '"]');
+  let c = null;
+  if (by === 'tel') {
+    const p = normPhone(f('Telefonas').value);
+    if (p.length < 8) return;
+    c = list.find(x => normPhone(x[1]) === p);
+  } else {
+    const n = norm(f('Klientas').value.trim());
+    if (!n) return;
+    const hits = list.filter(x => norm(x[0]) === n);
+    if (hits.length === 1) c = hits[0];
+  }
+  if (!c) { if (by === 'tel') $('#clhint').textContent = ''; return; }
+  const set = (k, v) => { const el = f(k); if (el && v && !el.value.trim()) el.value = v; };
+  set('Klientas', c[0]); set('Telefonas', c[1]); set('El. paštas', c[2]); set('Kliento adresas', c[3]);
+  $('#clhint').textContent = '✓ Esamas klientas: ' + c[0] + (c[1] ? ' · ' + c[1] : '');
+}
+
 function renderNew() {
   const L = S.data.lists;
   const req = ' <span class="req">*</span>';
@@ -388,8 +419,10 @@ function renderNew() {
   $('#app').innerHTML =
     '<div class="card"><div class="nr">Naujas priėmimas</div><div class="muted">Veikia ir be interneto – numeris suteikiamas išsiuntus.</div></div>' +
     '<label>Priėmė' + req + '</label><select data-f="Priėmė">' + optList(L.workers, prev, 'Pasirinkite...') + '</select>' +
+    inp('Telefonas', 'tel', true, 'Įveskite – esamas klientas bus rastas') +
     inp('Klientas', 'text', true) +
-    inp('Telefonas', 'tel', true) +
+    '<div id="clhint" class="muted"></div>' +
+    '<datalist id="cllist">' + (S.data.clients || []).map(c => '<option value="' + esc(c[0]) + '">' + esc(c[1]) + '</option>').join('') + '</datalist>' +
     inp('El. paštas', 'email', false) +
     inp('Kliento adresas', 'text', false) +
     sel('Įrenginio tipas', L.types, true) +
@@ -403,6 +436,8 @@ function renderNew() {
     '<label>Garantinis?' + req + '</label><div class="radios"><label><input type="radio" name="w" value="Taip">Taip</label><label><input type="radio" name="w" value="Ne">Ne</label></div>' +
     '<label>Nuotraukos (nebūtina)</label><input id="ph" type="file" accept="image/*" multiple><div id="phi" class="muted"></div>' +
     '<button data-act="submitnew">Išsaugoti priėmimą</button>';
+  const kl = $('[data-f="Klientas"]');
+  if (kl) kl.setAttribute('list', 'cllist');
 }
 
 async function submitNew(btn) {
@@ -573,6 +608,11 @@ document.addEventListener('click', async ev => {
 });
 
 document.addEventListener('input', ev => {
+  if (S.view === 'new' && ev.target.getAttribute) {
+    const f = ev.target.getAttribute('data-f');
+    if (f === 'Telefonas') clientLookup('tel');
+    else if (f === 'Klientas') clientLookup('name');
+  }
   if (ev.target.id === 'q') { S.q = ev.target.value; renderList(); }
 });
 document.addEventListener('change', ev => {
