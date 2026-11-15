@@ -203,12 +203,15 @@ function renderLogin() {
 }
 
 /* ---------- Sąrašas ---------- */
+const scope = () => lsGet('scope') || 'mine';
+
 function visible() {
   const role = S.auth.role;
   return S.data.items.filter(it => {
     const n = norm(it.statusas);
     if (n.indexOf('atiduot') >= 0) return false;
     if (role === 'mechanic' && n.indexOf('atlikt') >= 0) return false;
+    if (S.data.me && scope() === 'mine' && it.meistras && it.meistras !== S.data.me) return false;
     return true;
   });
 }
@@ -217,6 +220,9 @@ function renderListView() {
   const chips = [['', 'Visi'], ['q', 'Eilėje'], ['w', 'Atliekama'], ['p', 'Dalių'], ['d', 'Atlikta']];
   $('#app').innerHTML =
     '<div class="searchwrap"><input id="q" type="search" placeholder="Ieškoti: Nr., klientas, įrenginys, serija..." value="' + esc(S.q) + '"></div>' +
+    (S.data.me ? '<div class="chips scope">' +
+      '<button class="fchip' + (scope() === 'mine' ? ' on' : '') + '" data-act="scope" data-s="mine">Mano ir nepriskirti</button>' +
+      '<button class="fchip' + (scope() === 'all' ? ' on' : '') + '" data-act="scope" data-s="all">Visų meistrų</button></div>' : '') +
     '<div class="chips">' + chips.map(c => '<button class="fchip' + (S.filter === c[0] ? ' on' : '') + '" data-act="filter" data-f="' + c[0] + '">' + c[1] + '</button>').join('') + '</div>' +
     '<div id="count"></div><div id="list"></div>' +
     '<button class="sec" data-act="sync">Atnaujinti sąrašą</button>';
@@ -239,7 +245,8 @@ function renderList() {
       '<div class="top"><div class="nr">' + esc(it.tmp ? '⏳ Nauja' : it.nr) + ' · ' + esc(it.klientas) + '</div>' +
       chip(it.statusas) + '</div>' +
       '<div class="dev">' + esc(it.irenginys) + '</div>' +
-      (it.serija ? '<div class="muted">' + esc(it.serija) + '</div>' : '') + '</div>';
+      (it.serija ? '<div class="muted">' + esc(it.serija) + '</div>' : '') +
+      '<div class="muted">' + (it.meistras ? 'Meistras: ' + esc(it.meistras) : 'Nepriskirta') + '</div></div>';
   });
   const ts = S.data.ts ? ' · atnaujinta ' + pad(new Date(S.data.ts).getHours()) + ':' + pad(new Date(S.data.ts).getMinutes()) : '';
   $('#count').textContent = 'Rasta: ' + n + ' iš ' + items.length + ts;
@@ -268,10 +275,13 @@ function renderDetail() {
       (it.serija ? '<div class="muted">Serija / IMEI: ' + esc(it.serija) + '</div>' : '') +
       (it.telefonas ? '<div class="muted">Tel.: <a href="tel:' + esc(it.telefonas.replace(/[^\d+]/g, '')) + '">' + esc(it.telefonas) + '</a></div>' : '') +
       (it.data ? '<div class="muted">Priimta: ' + esc(it.data) + (it.garantinis ? ' · Garantija galioja: ' + esc(it.garantinis) : '') + '</div>' : '') +
+      '<div class="muted">' + (it.meistras ? 'Meistras: ' + esc(it.meistras) : 'Meistras nepriskirtas') + '</div>' +
       (it.aprasymas ? '<div class="pre"><b>Gedimas:</b> ' + esc(it.aprasymas) + '</div>' : '') +
       (it.komentarai ? '<div class="pre"><b>Komentarai:</b>\n' + esc(it.komentarai) + '</div>' : '') +
     '</div>' +
-    '<label>Kas rašo</label><select id="mech">' + optList(names, lsGet('mech')) + '</select>' +
+    (S.data.me
+      ? '<div class="muted">Rašo: <b>' + esc(S.data.me) + '</b></div><input id="mech" type="hidden" value="' + esc(S.data.me) + '">'
+      : '<label>Kas rašo</label><select id="mech">' + optList(names, lsGet('mech')) + '</select>') +
     '<label>Suremontuota garantiškai</label><select id="rw">' + optList(['Taip', 'Ne'], it.remontoGarantija || '', 'Nenurodyta') + '</select>' +
     '<label>Komentaras</label><textarea id="c" placeholder="Ką atlikta / kas rasta..."></textarea>' +
     '<label>Naujas statusas</label><select id="st">' + optList(S.data.statuses, '', 'Nekeisti') + '</select>' +
@@ -331,10 +341,11 @@ async function saveDetail(btn) {
       await obAdd({ type: 'comment', opId: uid(), nr, mech, comment: text, status, warranty: rw, ts: now });
       if (rw) it.remontoGarantija = rw;
       if (text) {
-        const line = stamp(new Date(now)) + (mech ? ' ' + mech : '') + ': ' + text;
+        const line = (mech ? mech + ': ' : '') + text;
         it.komentarai = (it.komentarai ? it.komentarai + '\n' : '') + line;
       }
       if (status) it.statusas = status;
+      if (status && /atliekam/i.test(status) && !it.meistras && S.data.me) it.meistras = S.data.me;
     }
     for (const b64 of photos) {
       await obAdd({ type: 'photo', opId: uid(), nr, mech, kind: S.auth.role === 'mechanic' ? 'mech' : 'intake', b64, ts: now });
@@ -525,6 +536,7 @@ document.addEventListener('click', async ev => {
   if (act === 'nav') return go(el.getAttribute('data-v'));
   if (act === 'open') return go('detail', el.getAttribute('data-k'));
   if (act === 'filter') { S.filter = el.getAttribute('data-f'); $$('.fchip').forEach(c => c.classList.toggle('on', c.getAttribute('data-f') === S.filter)); return renderList(); }
+  if (act === 'scope') { lsSet('scope', el.getAttribute('data-s')); return renderListView(); }
   if (act === 'save') return saveDetail(el);
   if (act === 'submitnew') return submitNew(el);
   if (act === 'sync') { S.err = ''; await sync(); if (!S.err) toast('Sinchronizuota.'); else toast(S.err, 'err'); return; }
