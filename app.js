@@ -122,7 +122,8 @@ async function login(pin) {
     await kvSet('auth', S.auth);
     await kvSet('data', j);
     say('');
-    go('list');
+    go(j.role === 'manager' ? 'dash' : 'list');
+    if (j.role === 'manager') loadDash(true);
     loadPending().then(sync);
   } catch (e) {
     const cached = await kvGet('auth');
@@ -171,7 +172,8 @@ function paintNav() {
   nav.className = '';
   const n = S.pending.length;
   const b = (v, label, extra) => '<button data-act="nav" data-v="' + v + '" class="' + (S.view === v || (v === 'list' && S.view === 'detail') ? 'on' : '') + '">' + label + (extra || '') + '</button>';
-  nav.innerHTML = b('list', 'Sąrašas') +
+  nav.innerHTML = (S.auth.role === 'manager' ? b('dash', 'Suvestinė') : '') +
+    b('list', 'Sąrašas') +
     (S.data && S.data.intake ? b('new', 'Nauja') : '') +
     b('queue', 'Siuntimas', n ? '<span class="n">' + n + '</span>' : '');
 }
@@ -185,6 +187,7 @@ function render() {
   if (S.view === 'detail') return renderDetail();
   if (S.view === 'new') return renderNew();
   if (S.view === 'queue') return renderQueue();
+  if (S.view === 'dash') return renderDash();
 }
 
 function refreshUi() {
@@ -494,6 +497,100 @@ function opLabel(o) {
   return 'Komentaras / statusas (' + esc(String(o.nr).indexOf('tmp:') === 0 ? 'naujam priėmimui' : o.nr) + ')';
 }
 
+/* ---------- Vadovo suvestinė ---------- */
+const eur = v => (Math.round((Number(v) || 0) * 100) / 100).toLocaleString('lt-LT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+const dPlural = n => n + ' d.';
+
+async function loadDash(force) {
+  if (!S.dash) S.dash = await kvGet('dash');
+  renderDash();
+  if (!navigator.onLine) return;
+  if (!force && S.dash && Date.now() - (S.dash.ts || 0) < 60000) return;
+  try {
+    const j = await post({ pin: S.auth.pin, action: 'dashboard' });
+    if (!j.ok) throw new Error(j.error || 'Klaida');
+    j.ts = Date.now();
+    S.dash = j;
+    await kvSet('dash', j);
+    if (S.view === 'dash') renderDash();
+  } catch (e) {
+    if (S.view === 'dash') toast('Suvestinės atnaujinti nepavyko: ' + (e.message || e), 'err');
+  }
+}
+
+function renderDash() {
+  const d = S.dash;
+  if (!d) { $('#app').innerHTML = '<div class="card"><div class="nr">Suvestinė</div><div class="muted">Kraunama... Pirmą kartą reikia interneto.</div></div>'; return; }
+  const c = d.menuo.dabar, p = d.menuo.praeitas;
+  const delta = (a, b, money) => {
+    if (!b && !a) return '<span class="muted">kaip praeitą mėn.</span>';
+    if (!b) return '<span class="up">nauja</span>';
+    const pc = Math.round((a - b) / b * 100);
+    if (!pc) return '<span class="muted">= kaip praeitą mėn.</span>';
+    return '<span class="' + (pc >= 0 ? 'up' : 'down') + '">' + (pc >= 0 ? '▲ ' : '▼ ') + Math.abs(pc) + '%</span> <span class="muted">vs ' + (money ? eur(b) : b) + '</span>';
+  };
+  const tile = (label, value, sub) => '<div class="tile"><div class="tl">' + label + '</div><div class="tv">' + value + '</div><div class="ts">' + sub + '</div></div>';
+  const rev = c.darbai + c.transportas, prevRev = p.darbai + p.transportas;
+
+  const list = (title, arr, unit, hint) => {
+    let h = '<details class="att"' + (arr.length ? ' open' : '') + '><summary><span>' + title + '</span><span class="cnt' + (arr.length ? ' warn' : '') + '">' + arr.length + '</span></summary>';
+    if (hint) h += '<div class="muted hint">' + hint + '</div>';
+    if (!arr.length) h += '<div class="muted hint">Nėra.</div>';
+    arr.slice(0, 30).forEach(x => {
+      const open = !!findItem(x.nr);
+      h += '<div class="card ' + (open ? 'tap ' : '') + 's-' + sc(x.statusas) + '"' + (open ? ' data-act="open" data-k="' + esc(x.nr) + '"' : '') + '>' +
+        '<div class="top"><div class="nr">' + esc(x.nr) + ' · ' + esc(x.klientas) + '</div><span class="chip c-w">' + unit + ' ' + dPlural(x.dienos) + '</span></div>' +
+        '<div class="dev">' + esc(x.irenginys) + '</div>' +
+        '<div class="muted">' + (x.priezastis ? '<b>' + esc(x.priezastis) + '</b> · ' : '') + esc(x.statusas) + (x.meistras ? ' · ' + esc(x.meistras) : ' · nepriskirta') +
+        (x.telefonas ? ' · <a href="tel:' + esc(x.telefonas.replace(/[^\d+]/g, '')) + '">' + esc(x.telefonas) + '</a>' : '') + '</div></div>';
+    });
+    if (arr.length > 30) h += '<div class="muted hint">Rodoma 30 iš ' + arr.length + '.</div>';
+    return h + '</details>';
+  };
+
+  const bars = (title, arr) => {
+    const max = Math.max(1, ...arr.map(x => x.kiekis));
+    return '<div class="card"><div class="nr">' + title + '</div>' + (arr.length ? arr.map(x =>
+      '<div class="bar"><span class="bl">' + esc(x.pavadinimas) + '</span><span class="bt"><span style="width:' + Math.round(x.kiekis / max * 100) + '%"></span></span><span class="bn">' + x.kiekis + '</span></div>').join('')
+      : '<div class="muted">Duomenų nėra.</div>') + '</div>';
+  };
+
+  const dem = d.demesio, r = d.ribos;
+  const totalAtt = new Set([].concat(dem.veluoja, dem.neatsiimta, dem.truksta, dem.eileje, dem.daliu).map(x => x.nr)).size;
+  const upd = d.ts ? pad(new Date(d.ts).getHours()) + ':' + pad(new Date(d.ts).getMinutes()) : '';
+
+  $('#app').innerHTML =
+    '<div class="dashhead"><div><div class="nr">Suvestinė · ' + esc(d.menuo.pavadinimas) + '</div><div class="muted">Atnaujinta ' + upd + ' · palyginta su praėjusiu mėnesiu</div></div>' +
+    '<button class="small sec" data-act="dashrefresh">Atnaujinti</button></div>' +
+    '<div class="tiles">' +
+      tile('Apyvarta (su PVM)', eur(rev), delta(rev, prevRev, true)) +
+      tile('Atlikta darbų', c.atlikta, delta(c.atlikta, p.atlikta)) +
+      tile('Priimta', c.priimta, delta(c.priimta, p.priimta)) +
+      tile('Vid. remonto trukmė', c.trukme == null ? '–' : String(c.trukme).replace('.', ',') + ' d.', p.trukme == null ? '<span class="muted">praeitą mėn. –</span>' : '<span class="muted">praeitą mėn. ' + String(p.trukme).replace('.', ',') + ' d.</span>') +
+    '</div>' +
+    '<div class="card"><div class="split"><span>Darbai <b>' + eur(c.darbai) + '</b></span><span>Transportas <b>' + eur(c.transportas) + '</b></span></div>' +
+      '<div class="muted">Atlikta: garantinių ' + c.garantiniai + ' · negarantinių ' + c.negarantiniai + (c.nenurodyta ? ' · <b>nenurodyta ' + c.nenurodyta + '</b>' : '') + '</div>' +
+      (d.kainuStulpeliai ? '' : '<div class="err-t">Lentelėje nėra kainų stulpelių – apyvarta nerodoma.</div>') + '</div>' +
+
+    '<h2 class="sect">Reikia dėmesio <span class="cnt' + (totalAtt ? ' warn' : '') + '">' + totalAtt + '</span></h2>' +
+    list('Neatsiimta technika', dem.neatsiimta, 'laukia', 'Darbas atliktas, bet klientas neatsiėmė ilgiau nei ' + r.PICKUP_DAYS + ' d.') +
+    list('Ilgai eilėje', dem.eileje, 'eilėje', 'Darbas nepradėtas ilgiau nei ' + r.QUEUE_DAYS + ' d.') +
+    list('Ilgai laukia dalių', dem.daliu, 'laukia', 'Dalių laukiama ilgiau nei ' + r.PARTS_DAYS + ' d.') +
+    list('Vėluojantys darbai', dem.veluoja, 'nuo priėmimo', 'Nebaigta ilgiau nei ' + r.LATE_DAYS + ' d. nuo priėmimo (be jau išvardintų eilėje ar laukiančių dalių).') +
+    list('Atlikti be kainos ar garantijos žymos', dem.truksta, 'prieš', 'Per paskutines ' + r.CHECK_DAYS + ' d. atlikti darbai, kuriuos reikia sutvarkyti.') +
+
+    '<h2 class="sect">Meistrai</h2>' +
+    '<div class="tablewrap"><table class="mt"><thead><tr><th>Meistras</th><th title="Atlikta šį mėnesį">Atlikta</th><th>Apyvarta</th><th>Turi</th></tr></thead><tbody>' +
+      (d.meistrai.length ? d.meistrai.map(m => '<tr><td>' + esc(m.meistras) + '</td><td>' + m.atlikta + '</td><td>' + eur(m.apyvarta) + '</td><td>' + m.dabar + '</td></tr>').join('') : '<tr><td colspan="4" class="muted">Duomenų nėra.</td></tr>') +
+      (d.nepriskirta ? '<tr class="na"><td>Nepriskirta</td><td></td><td></td><td>' + d.nepriskirta + '</td></tr>' : '') +
+    '</tbody></table></div>' +
+
+    '<h2 class="sect">Tendencijos · ' + d.ribos.TREND_DAYS + ' d.</h2>' +
+    bars('Dažniausi gedimai', d.gedimai) +
+    bars('Dažniausi gamintojai', d.gamintojai) +
+    '<div class="card"><div class="nr">Klientai šį mėnesį</div><div class="split"><span>Nauji <b>' + d.klientai.nauji + '</b></span><span>Grįžtantys <b>' + d.klientai.griztantys + '</b></span></div></div>';
+}
+
 function renderQueue() {
   const ops = S.pending;
   let h = '<div class="card"><div class="nr">Siuntimo eilė</div>' +
@@ -583,8 +680,9 @@ document.addEventListener('click', async ev => {
   if (!el) return;
   const act = el.getAttribute('data-act');
   if (act === 'login') return login($('#pin').value);
-  if (act === 'nav') return go(el.getAttribute('data-v'));
+  if (act === 'nav') { go(el.getAttribute('data-v')); if (S.view === 'dash') loadDash(false); return; }
   if (act === 'open') return go('detail', el.getAttribute('data-k'));
+  if (act === 'dashrefresh') return loadDash(true);
   if (act === 'filter') { S.filter = el.getAttribute('data-f'); $$('.fchip').forEach(c => c.classList.toggle('on', c.getAttribute('data-f') === S.filter)); return renderList(); }
   if (act === 'scope') { lsSet('scope', el.getAttribute('data-s')); return renderListView(); }
   if (act === 'save') return saveDetail(el);
@@ -642,7 +740,7 @@ async function init() {
     const a = await kvGet('auth');
     const d = await kvGet('data');
     await loadPending();
-    if (a && d) { S.auth = a; S.data = d; go('list'); sync(); } else go('login');
+    if (a && d) { S.auth = a; S.data = d; if (a.role === 'manager') { go('dash'); loadDash(false); } else go('list'); sync(); } else go('login');
   } catch (e) {
     go('login');
     say('Nepavyko atidaryti vietinės saugyklos: ' + (e.message || e), 'err');
