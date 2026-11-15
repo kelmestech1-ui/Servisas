@@ -254,6 +254,8 @@ function renderList() {
 }
 
 /* ---------- Detalė ---------- */
+const money = v => (v === '' || v == null ? '' : String(v).replace('.', ','));
+const moneyNum = v => { const t = String(v || '').replace(/[€\s]/g, '').replace(',', '.'); return t === '' ? null : Number(t); };
 const findItem = k => S.data.items.find(it => it.nr === k || it.tmpId === k);
 const opNr = it => (it.tmp ? it.tmpId : it.nr);
 
@@ -282,6 +284,10 @@ function renderDetail() {
     (S.data.me
       ? '<div class="muted">Rašo: <b>' + esc(S.data.me) + '</b></div><input id="mech" type="hidden" value="' + esc(S.data.me) + '">'
       : '<label>Kas rašo</label><select id="mech">' + optList(names, lsGet('mech')) + '</select>') +
+    '<div class="row2">' +
+      '<div><label>Darbų kaina, € su PVM</label><input id="pr" type="text" inputmode="decimal" autocomplete="off" placeholder="pvz. 35" value="' + esc(money(it.kaina)) + '"></div>' +
+      '<div><label>Transportas, € su PVM</label><input id="tr" type="text" inputmode="decimal" autocomplete="off" placeholder="pvz. 20" value="' + esc(money(it.transportas)) + '"></div>' +
+    '</div>' +
     '<label>Suremontuota garantiškai</label><select id="rw">' + optList(['Taip', 'Ne'], it.remontoGarantija || '', 'Nenurodyta') + '</select>' +
     '<label>Komentaras</label><textarea id="c" placeholder="Ką atlikta / kas rasta..."></textarea>' +
     '<label>Naujas statusas</label><select id="st">' + optList(S.data.statuses, '', 'Nekeisti') + '</select>' +
@@ -319,7 +325,14 @@ async function saveDetail(btn) {
   const rwEl = $('#rw');
   const rw = rwEl && rwEl.value !== (it.remontoGarantija || '') ? rwEl.value : '';
   const files = Array.from($('#ph').files || []);
-  if (!comment && !status && !rw && !files.length) { toast('Įrašykite komentarą, pasirinkite statusą, garantiją arba nuotrauką.', 'err'); return; }
+  const prNew = $('#pr').value.trim(), trNew = $('#tr').value.trim();
+  for (const v of [prNew, trNew]) {
+    const n = moneyNum(v);
+    if (n !== null && (!isFinite(n) || n < 0)) { toast('Neteisinga suma: ' + v, 'err'); return; }
+  }
+  const pr = moneyNum(prNew) !== moneyNum(it.kaina) && prNew !== '' ? prNew : '';
+  const tr = moneyNum(trNew) !== moneyNum(it.transportas) && trNew !== '' ? trNew : '';
+  if (!comment && !status && !rw && !pr && !tr && !files.length) { toast('Įrašykite komentarą, kainą, pasirinkite statusą, garantiją arba nuotrauką.', 'err'); return; }
   if (/atlikt/i.test(status) && !rw && !it.remontoGarantija) { toast('Pasirinkite, ar suremontuota garantiškai.', 'err'); if (rwEl) rwEl.focus(); return; }
   if (files.length > 10) { toast('Vienu metu galima pridėti iki 10 nuotraukų.', 'err'); return; }
 
@@ -337,9 +350,11 @@ async function saveDetail(btn) {
 
     let text = comment;
     if (files.length) text += (text ? ' ' : '') + '[nuotraukų: ' + files.length + ']';
-    if (text || status || rw) {
-      await obAdd({ type: 'comment', opId: uid(), nr, mech, comment: text, status, warranty: rw, ts: now });
+    if (text || status || rw || pr || tr) {
+      await obAdd({ type: 'comment', opId: uid(), nr, mech, comment: text, status, warranty: rw, price: pr, transport: tr, ts: now });
       if (rw) it.remontoGarantija = rw;
+      if (pr) it.kaina = String(moneyNum(pr));
+      if (tr) it.transportas = String(moneyNum(tr));
       if (text) {
         const line = (mech ? mech + ': ' : '') + text;
         it.komentarai = (it.komentarai ? it.komentarai + '\n' : '') + line;
@@ -476,7 +491,7 @@ async function sendOp(op) {
   }
   return post({
     pin: S.auth.pin, action: op.type, opId: op.opId,
-    nr, mech: op.mech, comment: op.comment, status: op.status, warranty: op.warranty,
+    nr, mech: op.mech, comment: op.comment, status: op.status, warranty: op.warranty, price: op.price, transport: op.transport,
     kind: op.kind, b64: op.b64, fields: op.fields, ts: op.ts
   });
 }
