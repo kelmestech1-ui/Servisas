@@ -41,6 +41,7 @@ const obPut = op => run('outbox', 'readwrite', s => s.put(op));
 const obDel = id => run('outbox', 'readwrite', s => s.delete(id));
 
 /* ---------- Būsena ---------- */
+const homeView = role => (role === 'manager' ? 'dash' : role === 'warranty' ? 'wlist' : 'list');
 const S = { auth: null, data: null, view: 'login', cur: null, pending: [], syncing: false, err: '', q: '', filter: '', tmpmap: {} };
 
 /* ---------- Pagalbinės ---------- */
@@ -122,7 +123,7 @@ async function login(pin) {
     await kvSet('auth', S.auth);
     await kvSet('data', j);
     say('');
-    go(j.role === 'manager' ? 'dash' : 'list');
+    go(homeView(j.role));
     if (j.role === 'manager') loadDash(true);
     loadPending().then(sync);
   } catch (e) {
@@ -172,6 +173,11 @@ function paintNav() {
   nav.className = '';
   const n = S.pending.length;
   const b = (v, label, extra) => '<button data-act="nav" data-v="' + v + '" class="' + (S.view === v || (v === 'list' && S.view === 'detail') ? 'on' : '') + '">' + label + (extra || '') + '</button>';
+  if (S.auth.role === 'warranty') {
+    nav.innerHTML = '<button data-act="nav" data-v="wlist" class="' + (S.view === 'wlist' || S.view === 'detail' ? 'on' : '') + '">Garantija</button>' +
+      b('queue', 'Siuntimas', n ? '<span class="n">' + n + '</span>' : '');
+    return;
+  }
   nav.innerHTML = (S.auth.role === 'manager' ? b('dash', 'Suvestinė') : '') +
     b('list', 'Sąrašas') +
     (S.data && S.data.intake ? b('new', 'Nauja') : '') +
@@ -188,12 +194,14 @@ function render() {
   if (S.view === 'new') return renderNew();
   if (S.view === 'queue') return renderQueue();
   if (S.view === 'dash') return renderDash();
+  if (S.view === 'wlist') return renderWList();
 }
 
 function refreshUi() {
   paintHeader();
   paintNav();
   if (S.view === 'list') { renderList(); }
+  if (S.view === 'wlist') renderWList();
   if (S.view === 'queue') renderQueue();
 }
 
@@ -270,7 +278,8 @@ function optList(list, sel, emptyLabel) {
 
 function renderDetail() {
   const it = findItem(S.cur);
-  if (!it) return go('list');
+  if (!it) return go(homeView(S.auth.role));
+  if (S.auth.role === 'warranty') return renderWDetail(it);
   const role = S.auth.role;
   const names = (S.data.lists.mechs && S.data.lists.mechs.length) ? S.data.lists.mechs : S.data.lists.workers;
   $('#app').innerHTML =
@@ -492,9 +501,111 @@ async function submitNew(btn) {
 
 /* ---------- Siuntimo eilė ---------- */
 function opLabel(o) {
+  if (o.type === 'warranty') return 'Garantinė pretenzija (' + esc(o.nr) + ')';
   if (o.type === 'intake') return 'Naujas priėmimas: ' + esc((o.fields && o.fields['Klientas']) || '');
   if (o.type === 'photo') return 'Nuotrauka (' + esc(String(o.nr).indexOf('tmp:') === 0 ? 'naujam priėmimui' : o.nr) + ')';
   return 'Komentaras / statusas (' + esc(String(o.nr).indexOf('tmp:') === 0 ? 'naujam priėmimui' : o.nr) + ')';
+}
+
+/* ---------- Garantinės pretenzijos ---------- */
+const W_STAGES = ['Neužpildyta', 'Laukia patvirtinimo', 'Laukiamos dalys', 'Užbaigta'];
+const W_PARTS = 'Laukiamos dalys';
+const wStage = () => { const v = lsGet('wstage'); return W_STAGES.indexOf(v) >= 0 ? v : W_STAGES[0]; };
+const wCls = st => (st === W_STAGES[0] ? 'q' : st === W_STAGES[1] ? 'p' : st === W_PARTS ? 'w' : 'h');
+const daysSince = d => { if (!d) return null; const t = new Date(d + 'T00:00:00'); return isNaN(t) ? null : Math.floor((Date.now() - t) / 86400000); };
+
+function renderWList() {
+  if (!S.data) return;
+  const items = S.data.items || [];
+  const cur = wStage();
+  const cnt = st => items.filter(it => it.gStage === st).length;
+  if (!$('#wl')) {
+    $('#app').innerHTML =
+      '<div class="seg">' + W_STAGES.map(st => '<button class="segb" data-act="wstage" data-s="' + esc(st) + '">' +
+        '<span class="sl">' + esc(st) + '</span><span class="cnt" data-c="' + esc(st) + '"></span></button>').join('') + '</div>' +
+      '<div class="searchwrap"><input id="q" type="search" placeholder="Ieškoti: Nr., klientas, gamintojas, akto Nr..." value="' + esc(S.q) + '"></div>' +
+      '<div id="count"></div><div id="wl"></div>' +
+      '<button class="sec" data-act="sync">Atnaujinti sąrašą</button>';
+  }
+  $$('.segb').forEach(b => b.classList.toggle('on', b.getAttribute('data-s') === cur));
+  $$('[data-c]').forEach(c => {
+    const n = cnt(c.getAttribute('data-c'));
+    c.textContent = n;
+    c.classList.toggle('warn', c.getAttribute('data-c') === W_STAGES[0] && n > 0);
+  });
+  const words = norm(S.q).split(' ').filter(Boolean);
+  let out = '', n = 0;
+  items.forEach(it => {
+    if (it.gStage !== cur) return;
+    const hay = norm([it.nr, it.klientas, it.irenginys, it.serija, it.telefonas, it.gAct, it.meistras].join(' '));
+    for (const w of words) { if (hay.indexOf(w) < 0) return; }
+    n++;
+    const ds = cur === W_STAGES[0] ? daysSince(it.atlikta || it.itraukta) : daysSince(it.gDate);
+    const info = cur === W_STAGES[0]
+      ? (it.atlikta ? 'Suremontuota ' + esc(it.atlikta) + (ds != null ? ' · prieš ' + ds + ' d.' : '') : 'Remontas dar nebaigtas')
+      : 'Aktas <b>' + esc(it.gAct || '–') + '</b> · pateikta ' + esc(it.gDate || '–') +
+        (cur === W_PARTS ? ' · dalys <b>' + esc(it.gParts || '–') + '</b>' : '') +
+        (cur !== W_STAGES[3] && ds != null ? ' · ' + ds + ' d.' : '');
+    out += '<div class="card tap s-' + wCls(it.gStage) + '" data-act="open" data-k="' + esc(it.nr) + '">' +
+      '<div class="top"><div class="nr">' + esc(it.nr) + ' · ' + esc(it.klientas) + '</div>' +
+        (cur === W_STAGES[0] && ds != null && ds >= 7 ? '<span class="chip c-late">' + ds + ' d.</span>' : '<span class="chip c-' + wCls(it.gStage) + '">' + esc(it.gStage) + '</span>') + '</div>' +
+      '<div class="dev">' + esc(it.irenginys) + '</div>' +
+      '<div class="muted">' + info + (it.meistras ? ' · ' + esc(it.meistras) : '') + '</div></div>';
+  });
+  const ts = S.data.ts ? ' · atnaujinta ' + pad(new Date(S.data.ts).getHours()) + ':' + pad(new Date(S.data.ts).getMinutes()) : '';
+  $('#count').textContent = 'Rasta: ' + n + ts;
+  $('#wl').innerHTML = out || '<p class="muted">Šioje dalyje darbų nėra.</p>';
+}
+
+function renderWDetail(it) {
+  const today = stamp(new Date()).slice(0, 10);
+  $('#app').innerHTML =
+    '<div class="card s-' + wCls(it.gStage) + '">' +
+      '<div class="top"><div class="nr">' + esc(it.nr) + ' · ' + esc(it.klientas) + '</div><span class="chip c-' + wCls(it.gStage) + '">' + esc(it.gStage) + '</span></div>' +
+      '<div class="dev">' + esc(it.irenginys) + '</div>' +
+      (it.serija ? '<div class="muted">Serija / IMEI: ' + esc(it.serija) + '</div>' : '') +
+      '<div class="muted">Priimta ' + esc(it.data || '–') + ' · suremontuota ' + esc(it.atlikta || '–') + (it.meistras ? ' · ' + esc(it.meistras) : '') + '</div>' +
+      (it.aprasymas ? '<div class="pre"><b>Gedimas:</b> ' + esc(it.aprasymas) + '</div>' : '') +
+      (it.komentarai ? '<div class="pre"><b>Meistro komentarai:</b>\n' + esc(it.komentarai) + '</div>' : '') +
+      (it.gNote ? '<div class="pre"><b>Pretenzijos istorija:</b>\n' + esc(it.gNote) + '</div>' : '') +
+    '</div>' +
+    '<div class="row2">' +
+      '<div><label>Garantinio akto Nr. <span class="req">*</span></label><input id="wa" type="text" autocomplete="off" value="' + esc(it.gAct || '') + '"></div>' +
+      '<div><label>Pateikta tiekėjui <span class="req">*</span></label><input id="wd" type="date" max="' + today + '" value="' + esc(it.gDate || '') + '"></div>' +
+    '</div>' +
+    '<label>Būsena</label><select id="ws">' + W_STAGES.map(st => '<option' + (st === it.gStage ? ' selected' : '') + '>' + esc(st) + '</option>').join('') + '</select>' +
+    '<div class="muted">Akto Nr. ir data privalomi visoms būsenoms, išskyrus „Neužpildyta“.</div>' +
+    '<div id="wpbox"><label>Dalių kodas <span class="req">*</span></label><input id="wp" type="text" autocomplete="off" placeholder="Pvz.: 5823-01, 5823-02" value="' + esc(it.gParts || '') + '"></div>' +
+    '<label>Komentaras <span class="req">*</span></label><textarea id="wc" placeholder="Pvz.: pateikta Husqvarna portale; patvirtinta, kompensuota 120 €..."></textarea>' +
+    '<button data-act="wsave">Išsaugoti</button>' +
+    '<button class="sec" data-act="nav" data-v="wlist">Atgal į sąrašą</button>';
+  if (it.gStage === W_STAGES[0] && !it.gAct) $('#ws').value = W_STAGES[1];
+  wPartsToggle();
+}
+function wPartsToggle() { const b = $('#wpbox'); if (b) b.classList.toggle('hidden', $('#ws').value !== W_PARTS); }
+
+async function saveW(btn) {
+  const it = findItem(S.cur);
+  if (!it) return;
+  const act = $('#wa').value.trim(), date = $('#wd').value, stage = $('#ws').value, comment = $('#wc').value.trim();
+  const parts = $('#wp').value.trim();
+  if (!comment) { toast('Komentaras privalomas.', 'err'); $('#wc').focus(); return; }
+  if (stage !== W_STAGES[0] && (!act || !date)) { toast('Įrašykite garantinio akto Nr. ir pateikimo datą.', 'err'); return; }
+  if (stage === W_PARTS && !parts) { toast('Įrašykite dalių kodą.', 'err'); $('#wp').focus(); return; }
+  btn.disabled = true;
+  try {
+    await obAdd({ type: 'warranty', opId: uid(), nr: it.nr, mech: S.data.me || '', stage, act: act !== (it.gAct || '') ? act : '', date: date !== (it.gDate || '') ? date : '', parts: parts !== (it.gParts || '') ? parts : '', comment, ts: Date.now() });
+    it.gAct = act; it.gDate = date; it.gStage = stage; if (parts) it.gParts = parts;
+    it.gNote = (it.gNote ? it.gNote + '\n' : '') + (S.data.me ? S.data.me + ': ' : '') + '[' + stage + '] ' + comment;
+    await kvSet('data', S.data);
+    toast(navigator.onLine ? 'Išsaugota, siunčiama...' : 'Išsaugota telefone. Bus išsiųsta atsiradus internetui.');
+    lsSet('wstage', stage);
+    await loadPending();
+    go('wlist');
+    sync();
+  } catch (e) {
+    toast(e.message || String(e), 'err');
+  } finally { btn.disabled = false; }
 }
 
 /* ---------- Vadovo suvestinė ---------- */
@@ -556,7 +667,7 @@ function renderDash() {
   };
 
   const dem = d.demesio, r = d.ribos;
-  const totalAtt = new Set([].concat(dem.veluoja, dem.neatsiimta, dem.truksta, dem.eileje, dem.daliu).map(x => x.nr)).size;
+  const totalAtt = new Set([].concat(dem.veluoja, dem.neatsiimta, dem.truksta, dem.eileje, dem.daliu, (d.pretenzijos && d.pretenzijos.velu) || []).map(x => x.nr)).size;
   const upd = d.ts ? pad(new Date(d.ts).getHours()) + ':' + pad(new Date(d.ts).getMinutes()) : '';
 
   $('#app').innerHTML =
@@ -577,8 +688,12 @@ function renderDash() {
     list('Ilgai eilėje', dem.eileje, 'eilėje', 'Darbas nepradėtas ilgiau nei ' + r.QUEUE_DAYS + ' d.') +
     list('Ilgai laukia dalių', dem.daliu, 'laukia', 'Dalių laukiama ilgiau nei ' + r.PARTS_DAYS + ' d.') +
     list('Vėluojantys darbai', dem.veluoja, 'nuo priėmimo', 'Nebaigta ilgiau nei ' + r.LATE_DAYS + ' d. nuo priėmimo (be jau išvardintų eilėje ar laukiančių dalių).') +
+    (d.pretenzijos && d.pretenzijos.velu ? list('Neužpildytos garantinės pretenzijos', d.pretenzijos.velu, 'laukia', 'Garantinis remontas atliktas, bet pretenzija tiekėjui neužpildyta ' + 7 + ' d. ar ilgiau.') : '') +
     list('Atlikti be kainos ar garantijos žymos', dem.truksta, 'prieš', 'Per paskutines ' + r.CHECK_DAYS + ' d. atlikti darbai, kuriuos reikia sutvarkyti.') +
 
+    (d.pretenzijos && d.pretenzijos.kiekiai ? '<h2 class="sect">Garantinės pretenzijos</h2><div class="card"><div class="split">' +
+      Object.keys(d.pretenzijos.kiekiai).map(k => '<span>' + esc(k) + ' <b class="' + (k === 'Neužpildyta' && d.pretenzijos.kiekiai[k] ? 'down' : '') + '">' + d.pretenzijos.kiekiai[k] + '</b></span>').join('') +
+      '</div></div>' : '') +
     '<h2 class="sect">Meistrai</h2>' +
     '<div class="tablewrap"><table class="mt"><thead><tr><th>Meistras</th><th title="Atlikta šį mėnesį">Atlikta</th><th>Apyvarta</th><th>Turi</th></tr></thead><tbody>' +
       (d.meistrai.length ? d.meistrai.map(m => '<tr><td>' + esc(m.meistras) + '</td><td>' + m.atlikta + '</td><td>' + eur(m.apyvarta) + '</td><td>' + m.dabar + '</td></tr>').join('') : '<tr><td colspan="4" class="muted">Duomenų nėra.</td></tr>') +
@@ -623,7 +738,7 @@ async function sendOp(op) {
   }
   return post({
     pin: S.auth.pin, action: op.type, opId: op.opId,
-    nr, mech: op.mech, comment: op.comment, status: op.status, warranty: op.warranty, price: op.price, transport: op.transport,
+    nr, mech: op.mech, comment: op.comment, status: op.status, warranty: op.warranty, price: op.price, transport: op.transport, stage: op.stage, act: op.act, date: op.date, parts: op.parts,
     kind: op.kind, b64: op.b64, fields: op.fields, ts: op.ts
   });
 }
@@ -683,6 +798,8 @@ document.addEventListener('click', async ev => {
   if (act === 'nav') { go(el.getAttribute('data-v')); if (S.view === 'dash') loadDash(false); return; }
   if (act === 'open') return go('detail', el.getAttribute('data-k'));
   if (act === 'dashrefresh') return loadDash(true);
+  if (act === 'wstage') { lsSet('wstage', el.getAttribute('data-s')); return renderWList(); }
+  if (act === 'wsave') return saveW(el);
   if (act === 'filter') { S.filter = el.getAttribute('data-f'); $$('.fchip').forEach(c => c.classList.toggle('on', c.getAttribute('data-f') === S.filter)); return renderList(); }
   if (act === 'scope') { lsSet('scope', el.getAttribute('data-s')); return renderListView(); }
   if (act === 'save') return saveDetail(el);
@@ -706,6 +823,7 @@ document.addEventListener('click', async ev => {
 });
 
 document.addEventListener('input', ev => {
+  if (ev.target.id === 'q' && S.view === 'wlist') { S.q = ev.target.value; renderWList(); return; }
   if (S.view === 'new' && ev.target.getAttribute) {
     const f = ev.target.getAttribute('data-f');
     if (f === 'Telefonas') clientLookup('tel');
@@ -714,6 +832,7 @@ document.addEventListener('input', ev => {
   if (ev.target.id === 'q') { S.q = ev.target.value; renderList(); }
 });
 document.addEventListener('change', ev => {
+  if (ev.target.id === 'ws') { wPartsToggle(); return; }
   if (ev.target.id === 'ph') {
     const n = ev.target.files ? ev.target.files.length : 0;
     $('#phi').textContent = n ? 'Pasirinkta nuotraukų: ' + n : '';
@@ -740,7 +859,7 @@ async function init() {
     const a = await kvGet('auth');
     const d = await kvGet('data');
     await loadPending();
-    if (a && d) { S.auth = a; S.data = d; if (a.role === 'manager') { go('dash'); loadDash(false); } else go('list'); sync(); } else go('login');
+    if (a && d) { S.auth = a; S.data = d; go(homeView(a.role)); if (a.role === 'manager') loadDash(false); sync(); } else go('login');
   } catch (e) {
     go('login');
     say('Nepavyko atidaryti vietinės saugyklos: ' + (e.message || e), 'err');
