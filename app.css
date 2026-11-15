@@ -61,3 +61,36 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 .err-t{color:#d92d20;font-size:13px;margin-top:4px}
 .chips.scope{padding-bottom:2px}
 .row2{display:flex;gap:8px}.row2>div{flex:1;min-width:0}
+/* Vadovo suvestinė */
+.dashhead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.dashhead button{margin:0}
+.tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px}
+@media (min-width:560px){.tiles{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;min-width:0}
+.tl{font-size:12px;font-weight:700;color:var(--muted)}
+.tv{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;margin:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ts{font-size:12px}
+.up{color:#16a34a;font-weight:700}.down{color:#d92d20;font-weight:700}
+.split{display:flex;gap:16px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+h2.sect{font-size:15px;margin:18px 2px 8px;display:flex;align-items:center;gap:8px}
+.cnt{display:inline-block;min-width:22px;padding:1px 7px;border-radius:999px;background:var(--line);color:var(--fg);font-size:12px;font-weight:800;text-align:center}
+.cnt.warn{background:#d92d20;color:#fff}
+details.att{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:8px;padding:0 10px}
+details.att>summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:11px 2px;font-weight:700}
+details.att>summary::-webkit-details-marker{display:none}
+details.att[open]{padding-bottom:6px}
+details.att .card{margin-bottom:6px;box-shadow:none}
+.hint{margin:0 2px 8px}
+.tablewrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:14px}
+table.mt{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+table.mt th,table.mt td{padding:9px 8px;text-align:left;border-bottom:1px solid var(--line)}
+table.mt td:not(:first-child),table.mt th:not(:first-child){text-align:right;white-space:nowrap}
+table.mt th{font-size:12px;color:var(--muted)}
+table.mt tr:last-child td{border-bottom:0}
+table.mt tr.na td{color:var(--muted)}
+.bar{display:grid;grid-template-columns:minmax(0,40%) 1fr auto;gap:8px;align-items:center;margin-top:8px;font-size:14px}
+.bl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt{height:10px;background:var(--line);border-radius:6px;overflow:hidden}
+.bt span{display:block;height:100%;background:#1F3864;border-radius:6px}
+.bn{font-weight:700;font-variant-numeric:tabular-nums}
+@media (prefers-color-scheme:dark){.bt span{background:#7da2e8}a{color:#8db4ff}nav button.on{color:#8db4ff}}
