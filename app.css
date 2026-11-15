@@ -60,3 +60,4 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 .op.failed{border-left-color:#d92d20}
 .err-t{color:#d92d20;font-size:13px;margin-top:4px}
 .chips.scope{padding-bottom:2px}
+.row2{display:flex;gap:8px}.row2>div{flex:1;min-width:0}
