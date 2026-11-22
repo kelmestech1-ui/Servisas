@@ -103,3 +103,10 @@ table.mt tr.na td{color:var(--muted)}
 .c-late{background:#fde6e9;color:#b00020}
 @media (prefers-color-scheme:dark){.c-late{background:#3d1a20;color:#ff9aa5}}
 button.newbtn{margin:0 0 10px;background:var(--card);color:var(--fg);border:1px dashed var(--line);font-size:15px}
+
+/* Kliento parašas */
+.sigbox{position:relative;height:170px;margin-top:8px;border:2px dashed var(--line);border-radius:12px;background:#fff;touch-action:none;overflow:hidden}
+.sigbox canvas{display:block;width:100%;height:100%;touch-action:none}
+.sigbox .sighint{position:absolute;left:0;right:0;bottom:12px;text-align:center;color:#8a8f98;font-size:14px;pointer-events:none}
+.sigbox.signed .sighint{display:none}
+.sigbox.signed{border-style:solid;border-color:#2e7d32}
