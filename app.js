@@ -174,7 +174,7 @@ function paintNav() {
   const n = S.pending.length;
   const b = (v, label, extra) => '<button data-act="nav" data-v="' + v + '" class="' + (S.view === v || (v === 'list' && S.view === 'detail') ? 'on' : '') + '">' + label + (extra || '') + '</button>';
   if (S.auth.role === 'warranty') {
-    nav.innerHTML = '<button data-act="nav" data-v="wlist" class="' + (S.view === 'wlist' || S.view === 'detail' ? 'on' : '') + '">Garantija</button>' +
+    nav.innerHTML = '<button data-act="nav" data-v="wlist" class="' + (S.view === 'wlist' || S.view === 'detail' || S.view === 'wnew' ? 'on' : '') + '">Garantija</button>' +
       b('queue', 'Siuntimas', n ? '<span class="n">' + n + '</span>' : '');
     return;
   }
@@ -195,6 +195,7 @@ function render() {
   if (S.view === 'queue') return renderQueue();
   if (S.view === 'dash') return renderDash();
   if (S.view === 'wlist') return renderWList();
+  if (S.view === 'wnew') return renderWNew();
 }
 
 function refreshUi() {
@@ -502,6 +503,7 @@ async function submitNew(btn) {
 /* ---------- Siuntimo eilė ---------- */
 function opLabel(o) {
   if (o.type === 'warranty') return 'Garantinė pretenzija (' + esc(o.nr) + ')';
+  if (o.type === 'wnew') return 'Nauja pretenzija: ' + esc((o.fields && o.fields.klientas) || '');
   if (o.type === 'intake') return 'Naujas priėmimas: ' + esc((o.fields && o.fields['Klientas']) || '');
   if (o.type === 'photo') return 'Nuotrauka (' + esc(String(o.nr).indexOf('tmp:') === 0 ? 'naujam priėmimui' : o.nr) + ')';
   return 'Komentaras / statusas (' + esc(String(o.nr).indexOf('tmp:') === 0 ? 'naujam priėmimui' : o.nr) + ')';
@@ -521,6 +523,7 @@ function renderWList() {
   const cnt = st => items.filter(it => it.gStage === st).length;
   if (!$('#wl')) {
     $('#app').innerHTML =
+      '<button class="newbtn" data-act="nav" data-v="wnew">+ Nauja pretenzija (be serviso)</button>' +
       '<div class="seg">' + W_STAGES.map(st => '<button class="segb" data-act="wstage" data-s="' + esc(st) + '">' +
         '<span class="sl">' + esc(st) + '</span><span class="cnt" data-c="' + esc(st) + '"></span></button>').join('') + '</div>' +
       '<div class="searchwrap"><input id="q" type="search" placeholder="Ieškoti: Nr., klientas, gamintojas, akto Nr..." value="' + esc(S.q) + '"></div>' +
@@ -542,15 +545,16 @@ function renderWList() {
     n++;
     const ds = cur === W_STAGES[0] ? daysSince(it.atlikta || it.itraukta) : daysSince(it.gDate);
     const info = cur === W_STAGES[0]
-      ? (it.atlikta ? 'Suremontuota ' + esc(it.atlikta) + (ds != null ? ' · prieš ' + ds + ' d.' : '') : 'Remontas dar nebaigtas')
+      ? (it.saltinis === 'Be serviso' ? 'Įtraukta ' + esc(it.itraukta || '–') + (ds != null ? ' · prieš ' + ds + ' d.' : '')
+         : it.atlikta ? 'Suremontuota ' + esc(it.atlikta) + (ds != null ? ' · prieš ' + ds + ' d.' : '') : 'Remontas dar nebaigtas')
       : 'Aktas <b>' + esc(it.gAct || '–') + '</b> · pateikta ' + esc(it.gDate || '–') +
         (cur === W_PARTS ? ' · dalys <b>' + esc(it.gParts || '–') + '</b>' : '') +
         (cur !== W_STAGES[3] && ds != null ? ' · ' + ds + ' d.' : '');
-    out += '<div class="card tap s-' + wCls(it.gStage) + '" data-act="open" data-k="' + esc(it.nr) + '">' +
+    out += '<div class="card ' + (it.tmp ? 'tmp ' : 'tap ') + 's-' + wCls(it.gStage) + '"' + (it.tmp ? '' : ' data-act="open" data-k="' + esc(it.nr) + '"') + '>' +
       '<div class="top"><div class="nr">' + esc(it.nr) + ' · ' + esc(it.klientas) + '</div>' +
         (cur === W_STAGES[0] && ds != null && ds >= 7 ? '<span class="chip c-late">' + ds + ' d.</span>' : '<span class="chip c-' + wCls(it.gStage) + '">' + esc(it.gStage) + '</span>') + '</div>' +
       '<div class="dev">' + esc(it.irenginys) + '</div>' +
-      '<div class="muted">' + info + (it.meistras ? ' · ' + esc(it.meistras) : '') + '</div></div>';
+      '<div class="muted">' + info + (it.meistras ? ' · ' + esc(it.meistras) : '') + (it.saltinis === 'Be serviso' ? ' · <b>be serviso</b>' : '') + '</div></div>';
   });
   const ts = S.data.ts ? ' · atnaujinta ' + pad(new Date(S.data.ts).getHours()) + ':' + pad(new Date(S.data.ts).getMinutes()) : '';
   $('#count').textContent = 'Rasta: ' + n + ts;
@@ -564,7 +568,9 @@ function renderWDetail(it) {
       '<div class="top"><div class="nr">' + esc(it.nr) + ' · ' + esc(it.klientas) + '</div><span class="chip c-' + wCls(it.gStage) + '">' + esc(it.gStage) + '</span></div>' +
       '<div class="dev">' + esc(it.irenginys) + '</div>' +
       (it.serija ? '<div class="muted">Serija / IMEI: ' + esc(it.serija) + '</div>' : '') +
-      '<div class="muted">Priimta ' + esc(it.data || '–') + ' · suremontuota ' + esc(it.atlikta || '–') + (it.meistras ? ' · ' + esc(it.meistras) : '') + '</div>' +
+      (it.saltinis === 'Be serviso'
+        ? '<div class="muted"><b>Be serviso</b> · įtraukta ' + esc(it.itraukta || '–') + '</div>'
+        : '<div class="muted">Priimta ' + esc(it.data || '–') + ' · suremontuota ' + esc(it.atlikta || '–') + (it.meistras ? ' · ' + esc(it.meistras) : '') + '</div>') +
       (it.aprasymas ? '<div class="pre"><b>Gedimas:</b> ' + esc(it.aprasymas) + '</div>' : '') +
       (it.komentarai ? '<div class="pre"><b>Meistro komentarai:</b>\n' + esc(it.komentarai) + '</div>' : '') +
       (it.gNote ? '<div class="pre"><b>Pretenzijos istorija:</b>\n' + esc(it.gNote) + '</div>' : '') +
@@ -599,6 +605,59 @@ async function saveW(btn) {
     it.gNote = (it.gNote ? it.gNote + '\n' : '') + (S.data.me ? S.data.me + ': ' : '') + '[' + stage + '] ' + comment;
     await kvSet('data', S.data);
     toast(navigator.onLine ? 'Išsaugota, siunčiama...' : 'Išsaugota telefone. Bus išsiųsta atsiradus internetui.');
+    lsSet('wstage', stage);
+    await loadPending();
+    go('wlist');
+    sync();
+  } catch (e) {
+    toast(e.message || String(e), 'err');
+  } finally { btn.disabled = false; }
+}
+
+/** Nauja pretenzija be serviso (pvz. parduotai technikai, kuri neremontuojama servise). */
+function renderWNew() {
+  const today = stamp(new Date()).slice(0, 10);
+  const req = ' <span class="req">*</span>';
+  $('#app').innerHTML =
+    '<div class="card"><div class="nr">Nauja pretenzija be serviso</div><div class="muted">Numeris (G-…) suteikiamas automatiškai išsiuntus.</div></div>' +
+    '<label>Klientas' + req + '</label><input id="nk" type="text" autocomplete="off">' +
+    '<label>Telefonas</label><input id="nt" type="tel" autocomplete="off">' +
+    '<label>Įrenginys' + req + '</label><input id="ni" type="text" autocomplete="off" placeholder="Pvz.: Vejapjovė Husqvarna LC 140">' +
+    '<label>Serijos Nr.</label><input id="ns" type="text" autocomplete="off">' +
+    '<div class="row2">' +
+      '<div><label>Garantinio akto Nr.</label><input id="wa" type="text" autocomplete="off"></div>' +
+      '<div><label>Pateikta tiekėjui</label><input id="wd" type="date" max="' + today + '"></div>' +
+    '</div>' +
+    '<label>Būsena</label><select id="ws">' + W_STAGES.map(st => '<option>' + esc(st) + '</option>').join('') + '</select>' +
+    '<div class="muted">Akto Nr. ir data privalomi visoms būsenoms, išskyrus „Neužpildyta“.</div>' +
+    '<div id="wpbox"><label>Dalių kodas' + req + '</label><input id="wp" type="text" autocomplete="off" placeholder="Pvz.: 5823-01, 5823-02"></div>' +
+    '<label>Komentaras' + req + '</label><textarea id="wc" placeholder="Gedimas, kas pateikta tiekėjui, kiti svarbūs dalykai..."></textarea>' +
+    '<button data-act="wnewsave">Išsaugoti pretenziją</button>' +
+    '<button class="sec" data-act="nav" data-v="wlist">Atšaukti</button>';
+  wPartsToggle();
+}
+
+async function saveWNew(btn) {
+  const v = id => $(id).value.trim();
+  const fields = { klientas: v('#nk'), telefonas: v('#nt'), irenginys: v('#ni'), serija: v('#ns') };
+  const act = v('#wa'), date = $('#wd').value, stage = $('#ws').value, parts = v('#wp'), comment = v('#wc');
+  if (!fields.klientas) { toast('Įrašykite klientą.', 'err'); $('#nk').focus(); return; }
+  if (!fields.irenginys) { toast('Įrašykite įrenginį.', 'err'); $('#ni').focus(); return; }
+  if (!comment) { toast('Komentaras privalomas.', 'err'); $('#wc').focus(); return; }
+  if (stage !== W_STAGES[0] && (!act || !date)) { toast('Įrašykite garantinio akto Nr. ir pateikimo datą.', 'err'); return; }
+  if (stage === W_PARTS && !parts) { toast('Įrašykite dalių kodą.', 'err'); $('#wp').focus(); return; }
+  btn.disabled = true;
+  try {
+    const tmpId = 'tmp:' + uid();
+    await obAdd({ type: 'wnew', opId: uid(), tmpId, fields, stage, act, date, parts, comment, mech: S.data.me || '', ts: Date.now() });
+    S.data.items.unshift({
+      nr: '⏳ Nauja', tmp: true, tmpId, klientas: fields.klientas, telefonas: fields.telefonas,
+      irenginys: fields.irenginys + (fields.serija ? ' · SN ' + fields.serija : ''), saltinis: 'Be serviso',
+      itraukta: today(), gStage: stage, gAct: act, gDate: date, gParts: parts,
+      gNote: (S.data.me ? S.data.me + ': ' : '') + '[' + stage + '] ' + comment
+    });
+    await kvSet('data', S.data);
+    toast(navigator.onLine ? 'Pretenzija išsaugota, siunčiama...' : 'Išsaugota telefone. Bus išsiųsta atsiradus internetui.');
     lsSet('wstage', stage);
     await loadPending();
     go('wlist');
@@ -800,6 +859,7 @@ document.addEventListener('click', async ev => {
   if (act === 'dashrefresh') return loadDash(true);
   if (act === 'wstage') { lsSet('wstage', el.getAttribute('data-s')); return renderWList(); }
   if (act === 'wsave') return saveW(el);
+  if (act === 'wnewsave') return saveWNew(el);
   if (act === 'filter') { S.filter = el.getAttribute('data-f'); $$('.fchip').forEach(c => c.classList.toggle('on', c.getAttribute('data-f') === S.filter)); return renderList(); }
   if (act === 'scope') { lsSet('scope', el.getAttribute('data-s')); return renderListView(); }
   if (act === 'save') return saveDetail(el);
