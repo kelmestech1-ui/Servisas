@@ -41,7 +41,7 @@ const obPut = op => run('outbox', 'readwrite', s => s.put(op));
 const obDel = id => run('outbox', 'readwrite', s => s.delete(id));
 
 /* ---------- Būsena ---------- */
-const homeView = role => (role === 'manager' ? 'dash' : role === 'warranty' ? 'wlist' : 'list');
+const homeView = role => (role === 'manager' ? 'dash' : role === 'warranty' ? 'wlist' : role === 'driver' ? 'new' : 'list');
 const S = { auth: null, data: null, view: 'login', cur: null, pending: [], syncing: false, err: '', q: '', filter: '', tmpmap: {} };
 
 /* ---------- Pagalbinės ---------- */
@@ -130,7 +130,7 @@ async function login(pin) {
     const cached = await kvGet('auth');
     const data = await kvGet('data');
     if (e.net && cached && cached.pin === pin && data) {
-      S.auth = cached; S.data = data; say(''); go('list'); loadPending();
+      S.auth = cached; S.data = data; say(''); go(homeView(cached.role)); loadPending();
     } else {
       say(e.net ? 'Nėra ryšio. Pirmą kartą prisijungti reikia interneto. (' + e.message + ')' : e.message, 'err');
     }
@@ -178,6 +178,10 @@ function paintNav() {
       b('queue', 'Siuntimas', n ? '<span class="n">' + n + '</span>' : '');
     return;
   }
+  if (S.auth.role === 'driver') {
+    nav.innerHTML = b('new', 'Paimti') + b('list', 'Mano paėmimai') + b('queue', 'Siuntimas', n ? '<span class="n">' + n + '</span>' : '');
+    return;
+  }
   nav.innerHTML = (S.auth.role === 'manager' ? b('dash', 'Suvestinė') : '') +
     b('list', 'Sąrašas') +
     (S.data && S.data.intake ? b('new', 'Nauja') : '') +
@@ -223,7 +227,7 @@ function visible() {
     const n = norm(it.statusas);
     if (n.indexOf('atiduot') >= 0) return false;
     if (role === 'mechanic' && n.indexOf('atlikt') >= 0) return false;
-    if (S.data.me && scope() === 'mine' && it.meistras && it.meistras !== S.data.me) return false;
+    if (role === 'mechanic' && S.data.me && scope() === 'mine' && it.meistras && it.meistras !== S.data.me) return false;
     return true;
   });
 }
@@ -232,7 +236,7 @@ function renderListView() {
   const chips = [['', 'Visi'], ['q', 'Eilėje'], ['w', 'Atliekama'], ['p', 'Dalių'], ['d', 'Atlikta']];
   $('#app').innerHTML =
     '<div class="searchwrap"><input id="q" type="search" placeholder="Ieškoti: Nr., klientas, įrenginys, serija..." value="' + esc(S.q) + '"></div>' +
-    (S.data.me ? '<div class="chips scope">' +
+    (S.auth.role === 'mechanic' && S.data.me ? '<div class="chips scope">' +
       '<button class="fchip' + (scope() === 'mine' ? ' on' : '') + '" data-act="scope" data-s="mine">Mano ir nepriskirti</button>' +
       '<button class="fchip' + (scope() === 'all' ? ' on' : '') + '" data-act="scope" data-s="all">Visų meistrų</button></div>' : '') +
     '<div class="chips">' + chips.map(c => '<button class="fchip' + (S.filter === c[0] ? ' on' : '') + '" data-act="filter" data-f="' + c[0] + '">' + c[1] + '</button>').join('') + '</div>' +
@@ -281,6 +285,17 @@ function renderDetail() {
   const it = findItem(S.cur);
   if (!it) return go(homeView(S.auth.role));
   if (S.auth.role === 'warranty') return renderWDetail(it);
+  if (S.auth.role === 'driver') {
+    $('#app').innerHTML = '<div class="card s-' + sc(it.statusas) + '">' +
+      '<div class="top"><div class="nr">' + esc(it.tmp ? '⏳ Nauja (laukia išsiuntimo)' : it.nr) + ' · ' + esc(it.klientas) + '</div>' + chip(it.statusas) + '</div>' +
+      '<div class="dev">' + esc(it.irenginys) + '</div>' +
+      (it.serija ? '<div class="muted">Serija: ' + esc(it.serija) + '</div>' : '') +
+      (it.telefonas ? '<div class="muted">Tel.: ' + esc(it.telefonas) + '</div>' : '') +
+      '<div class="muted">Paimta ' + esc(it.data || '') + (it.meistras ? ' · meistras ' + esc(it.meistras) : '') + '</div>' +
+      (it.aprasymas ? '<div class="pre"><b>Gedimas:</b> ' + esc(it.aprasymas) + '</div>' : '') +
+      '</div><button class="sec" data-act="nav" data-v="list">Atgal</button>';
+    return;
+  }
   const role = S.auth.role;
   const names = (S.data.lists.mechs && S.data.lists.mechs.length) ? S.data.lists.mechs : S.data.lists.workers;
   $('#app').innerHTML =
@@ -429,15 +444,18 @@ function renderNew() {
   const inp = (title, type, r, ph) => '<label>' + esc(title) + (r ? req : '') + '</label><input data-f="' + esc(title) + '" type="' + (type || 'text') + '"' + (ph ? ' placeholder="' + esc(ph) + '"' : '') + ' autocomplete="off">';
   const sel = (title, list, r, emptyLabel) => '<label>' + esc(title) + (r ? req : '') + '</label><select data-f="' + esc(title) + '">' + optList(list, '', emptyLabel || 'Pasirinkite...') + '</select>';
   const prev = lsGet('mech');
+  const drv = S.auth.role === 'driver';
   $('#app').innerHTML =
-    '<div class="card"><div class="nr">Naujas priėmimas</div><div class="muted">Veikia ir be interneto – numeris suteikiamas išsiuntus.</div></div>' +
-    '<label>Priėmė' + req + '</label><select data-f="Priėmė">' + optList(L.workers, prev, 'Pasirinkite...') + '</select>' +
+    '<div class="card"><div class="nr">' + (drv ? 'Technikos paėmimas' : 'Naujas priėmimas') + '</div><div class="muted">' +
+      (drv ? 'Paėmė: <b>' + esc(S.data.me || '') + '</b> · veikia ir be interneto' : 'Veikia ir be interneto – numeris suteikiamas išsiuntus.') + '</div></div>' +
+    (drv ? '<input type="hidden" data-f="Priėmė" value="' + esc(S.data.me || '') + '">'
+         : '<label>Priėmė' + req + '</label><select data-f="Priėmė">' + optList(L.workers, prev, 'Pasirinkite...') + '</select>') +
     inp('Telefonas', 'tel', true, 'Įveskite – esamas klientas bus rastas') +
     inp('Klientas', 'text', true) +
     '<div id="clhint" class="muted"></div>' +
     '<datalist id="cllist">' + (S.data.clients || []).map(c => '<option value="' + esc(c[0]) + '">' + esc(c[1]) + '</option>').join('') + '</datalist>' +
-    inp('El. paštas', 'email', false) +
-    inp('Kliento adresas', 'text', false) +
+    '<label>Kliento el. paštas</label><input data-f="El. paštas" type="email" inputmode="email" placeholder="Įrašius – klientas gaus akto kopiją" autocomplete="off">' +
+    inp('Kliento adresas', 'text', drv, drv ? 'Iš kur paimta technika' : '') +
     sel('Įrenginio tipas', L.types, true) +
     sel('Gamintojas', L.makers, true) +
     inp('Modelis', 'text', false) +
@@ -447,10 +465,60 @@ function renderNew() {
     sel('Gedimo tipas', L.faults, true) +
     '<label>Gedimo aprašymas (kliento žodžiais)' + req + '</label><textarea data-f="Gedimo aprašymas (kliento žodžiais)"></textarea>' +
     '<label>Garantinis?' + req + '</label><div class="radios"><label><input type="radio" name="w" value="Taip">Taip</label><label><input type="radio" name="w" value="Ne">Ne</label></div>' +
-    '<label>Nuotraukos (nebūtina)</label><input id="ph" type="file" accept="image/*" multiple><div id="phi" class="muted"></div>' +
-    '<button data-act="submitnew">Išsaugoti priėmimą</button>';
+    '<label>Nuotraukos' + (drv ? req + ' <span class="muted">(bent viena: bendras vaizdas, pažeidimai, serijos Nr.)</span>' : ' (nebūtina)') + '</label><input id="ph" type="file" accept="image/*" multiple><div id="phi" class="muted"></div>' +
+    '<label>Kliento parašas' + (drv ? req : ' (nebūtina)') + '</label>' +
+    '<div class="muted">Klientas patvirtina, kad technika perduota servisui, o duomenys teisingi.</div>' +
+    '<div class="sigbox"><canvas id="sig"></canvas><span class="sighint">Pasirašykite pirštu čia</span></div>' +
+    '<button type="button" class="sec small" data-act="sigclear">Išvalyti parašą</button>' +
+    '<button data-act="submitnew">' + (drv ? 'Išsaugoti paėmimą' : 'Išsaugoti priėmimą') + '</button>';
   const kl = $('[data-f="Klientas"]');
   if (kl) kl.setAttribute('list', 'cllist');
+  sigInit();
+}
+
+/* ---------- Kliento parašas ---------- */
+function sigInit() {
+  const c = $('#sig');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const size = () => {
+    const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    c.width = Math.max(1, Math.round(r.width * dpr)); c.height = Math.max(1, Math.round(r.height * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111'; ctx.fillStyle = '#111';
+    S.sig = false; c.parentNode.classList.remove('signed');
+  };
+  size();
+  let last = null;
+  const pt = e => { const r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  c.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    try { c.setPointerCapture(e.pointerId); } catch (x) {}
+    last = pt(e); ctx.beginPath(); ctx.arc(last[0], last[1], 1.1, 0, 7); ctx.fill();
+  });
+  c.addEventListener('pointermove', e => {
+    if (!last) return;
+    e.preventDefault();
+    const p = pt(e);
+    ctx.beginPath(); ctx.moveTo(last[0], last[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
+    last = p;
+    if (!S.sig) { S.sig = true; c.parentNode.classList.add('signed'); }
+  });
+  const end = () => { last = null; };
+  c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
+  S.sigClear = size;
+}
+
+/** Parašas kaip nedidelis PNG (baltas fonas), arba '' jei nepasirašyta. */
+function sigData() {
+  const c = $('#sig');
+  if (!c || !S.sig) return '';
+  const w = 600, h = Math.round(600 * c.height / c.width);
+  const o = document.createElement('canvas'); o.width = w; o.height = h;
+  const x = o.getContext('2d');
+  x.fillStyle = '#fff'; x.fillRect(0, 0, w, h);
+  x.drawImage(c, 0, 0, w, h);
+  return o.toDataURL('image/png').split(',')[1];
 }
 
 async function submitNew(btn) {
@@ -463,6 +531,12 @@ async function submitNew(btn) {
   if (miss.length) { toast('Užpildykite: ' + miss.join(', '), 'err'); return; }
   const files = Array.from($('#ph').files || []);
   if (files.length > 10) { toast('Vienu metu galima pridėti iki 10 nuotraukų.', 'err'); return; }
+  const drv = S.auth.role === 'driver';
+  if (drv && !fields['Kliento adresas']) { toast('Užpildykite: Kliento adresas', 'err'); return; }
+  if (fields['El. paštas'] && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields['El. paštas'])) { toast('Neteisingas el. pašto adresas.', 'err'); return; }
+  if (drv && !files.length) { toast('Pridėkite bent vieną nuotrauką.', 'err'); return; }
+  const sig = sigData();
+  if (drv && !sig) { toast('Reikalingas kliento parašas.', 'err'); return; }
 
   btn.disabled = true;
   try {
@@ -474,7 +548,7 @@ async function submitNew(btn) {
     lsSet('mech', fields['Priėmė']);
     const ts = Date.now();
     const tmpId = 'tmp:' + uid();
-    await obAdd({ type: 'intake', opId: uid(), tmpId, fields, ts });
+    await obAdd({ type: 'intake', opId: uid(), tmpId, fields, sig, ts });
     for (const b64 of photos) {
       await obAdd({ type: 'photo', opId: uid(), nr: tmpId, mech: fields['Priėmė'], kind: 'intake', b64, ts });
     }
@@ -798,7 +872,7 @@ async function sendOp(op) {
   return post({
     pin: S.auth.pin, action: op.type, opId: op.opId,
     nr, mech: op.mech, comment: op.comment, status: op.status, warranty: op.warranty, price: op.price, transport: op.transport, stage: op.stage, act: op.act, date: op.date, parts: op.parts,
-    kind: op.kind, b64: op.b64, fields: op.fields, ts: op.ts
+    kind: op.kind, b64: op.b64, fields: op.fields, sig: op.sig, ts: op.ts
   });
 }
 
@@ -864,6 +938,7 @@ document.addEventListener('click', async ev => {
   if (act === 'scope') { lsSet('scope', el.getAttribute('data-s')); return renderListView(); }
   if (act === 'save') return saveDetail(el);
   if (act === 'submitnew') return submitNew(el);
+  if (act === 'sigclear') { if (S.sigClear) S.sigClear(); return; }
   if (act === 'sync') { S.err = ''; await sync(); if (!S.err) toast('Sinchronizuota.'); else toast(S.err, 'err'); return; }
   if (act === 'rm') {
     if (!confirm('Pašalinti šį neišsiųstą įrašą? Jo duomenys bus prarasti.')) return;
