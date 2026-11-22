@@ -102,3 +102,4 @@ table.mt tr.na td{color:var(--muted)}
 .segb .sl{text-align:center;font-size:12px;hyphens:auto}
 .c-late{background:#fde6e9;color:#b00020}
 @media (prefers-color-scheme:dark){.c-late{background:#3d1a20;color:#ff9aa5}}
+button.newbtn{margin:0 0 10px;background:var(--card);color:var(--fg);border:1px dashed var(--line);font-size:15px}
