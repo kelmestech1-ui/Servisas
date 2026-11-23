@@ -1,5 +1,5 @@
 /* Service worker: programėlės failai pasiekiami ir be interneto. */
-const CACHE = 'servisas-v14';
+const CACHE = 'servisas-v15';
 const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'config.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
