@@ -321,6 +321,11 @@ function renderDetail() {
     '<label>Suremontuota garantiškai</label><select id="rw">' + optList(['Taip', 'Ne'], it.remontoGarantija || '', 'Nenurodyta') + '</select>' +
     '<label>Komentaras</label><textarea id="c" placeholder="Ką atlikta / kas rasta..."></textarea>' +
     '<label>Naujas statusas</label><select id="st">' + optList(S.data.statuses, '', 'Nekeisti') + '</select>' +
+    '<div id="opbox"' + (/dali/i.test(it.statusas) || it.uzsakytos ? '' : ' class="hidden"') + '>' +
+      '<label>Užsakytos dalys (pavadinimas, kodas)</label>' +
+      '<textarea id="op" class="short" placeholder="Pvz.: Karbiuratorius 545081857; tarpinė 503 45 02-01">' + esc(it.uzsakytos || '') + '</textarea>' +
+      (it.daliuData ? '<div class="muted">Užsakyta ' + esc(it.daliuData) + (daysSince(it.daliuData) != null ? ' · prieš ' + daysSince(it.daliuData) + ' d.' : '') + '</div>' : '') +
+    '</div>' +
     '<label>Nuotraukos (nebūtina)</label><input id="ph" type="file" accept="image/*" multiple>' +
     '<div id="phi" class="muted"></div>' +
     '<button data-act="save">Išsaugoti</button>' +
@@ -363,7 +368,11 @@ async function saveDetail(btn) {
   const pr = moneyNum(prNew) !== moneyNum(it.kaina) && prNew !== '' ? prNew : '';
   const tr = moneyNum(trNew) !== moneyNum(it.transportas) && trNew !== '' ? trNew : '';
   const dp = moneyNum(dpNew) !== moneyNum(it.dalys) && dpNew !== '' ? dpNew : '';
-  if (!comment && !status && !rw && !pr && !tr && !dp && !files.length) { toast('Įrašykite komentarą, kainą, pasirinkite statusą, garantiją arba nuotrauką.', 'err'); return; }
+  const opEl = $('#op');
+  const opNew = opEl ? opEl.value.trim() : '';
+  const opv = opNew !== (it.uzsakytos || '').trim() ? opNew : null;   // null – nekeista
+  if (/dali/i.test(status) && !opNew) { toast('Įrašykite užsakytas dalis ir jų kodus.', 'err'); if (opEl) opEl.focus(); return; }
+  if (!comment && !status && !rw && !pr && !tr && !dp && opv === null && !files.length) { toast('Įrašykite komentarą, kainą, pasirinkite statusą, garantiją arba nuotrauką.', 'err'); return; }
   if (/atlikt/i.test(status) && !rw && !it.remontoGarantija) { toast('Pasirinkite, ar suremontuota garantiškai.', 'err'); if (rwEl) rwEl.focus(); return; }
   if (files.length > 10) { toast('Vienu metu galima pridėti iki 10 nuotraukų.', 'err'); return; }
 
@@ -381,8 +390,10 @@ async function saveDetail(btn) {
 
     let text = comment;
     if (files.length) text += (text ? ' ' : '') + '[nuotraukų: ' + files.length + ']';
-    if (text || status || rw || pr || tr || dp) {
-      await obAdd({ type: 'comment', opId: uid(), nr, mech, comment: text, status, warranty: rw, price: pr, partsPrice: dp, transport: tr, ts: now });
+    if (text || status || rw || pr || tr || dp || opv !== null) {
+      await obAdd({ type: 'comment', opId: uid(), nr, mech, comment: text, status, warranty: rw, price: pr, partsPrice: dp, transport: tr, orderedParts: opv, ts: now });
+      if (opv !== null) it.uzsakytos = opv;
+      if (/dali/i.test(status) && !it.daliuData) it.daliuData = today();
       if (rw) it.remontoGarantija = rw;
       if (pr) it.kaina = String(moneyNum(pr));
       if (tr) it.transportas = String(moneyNum(tr));
@@ -875,7 +886,7 @@ async function sendOp(op) {
   }
   return post({
     pin: S.auth.pin, action: op.type, opId: op.opId,
-    nr, mech: op.mech, comment: op.comment, status: op.status, warranty: op.warranty, price: op.price, partsPrice: op.partsPrice, transport: op.transport, stage: op.stage, act: op.act, date: op.date, parts: op.parts,
+    nr, mech: op.mech, comment: op.comment, status: op.status, warranty: op.warranty, price: op.price, partsPrice: op.partsPrice, transport: op.transport, orderedParts: op.orderedParts, stage: op.stage, act: op.act, date: op.date, parts: op.parts,
     kind: op.kind, b64: op.b64, fields: op.fields, sig: op.sig, ts: op.ts
   });
 }
@@ -972,6 +983,7 @@ document.addEventListener('input', ev => {
 });
 document.addEventListener('change', ev => {
   if (ev.target.id === 'ws') { wPartsToggle(); return; }
+  if (ev.target.id === 'st' && $('#opbox')) { if (/dali/i.test(ev.target.value)) { $('#opbox').classList.remove('hidden'); $('#op').focus(); } return; }
   if (ev.target.id === 'ph') {
     const n = ev.target.files ? ev.target.files.length : 0;
     $('#phi').textContent = n ? 'Pasirinkta nuotraukų: ' + n : '';
