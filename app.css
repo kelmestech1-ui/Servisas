@@ -110,3 +110,4 @@ button.newbtn{margin:0 0 10px;background:var(--card);color:var(--fg);border:1px 
 .sigbox .sighint{position:absolute;left:0;right:0;bottom:12px;text-align:center;color:#8a8f98;font-size:14px;pointer-events:none}
 .sigbox.signed .sighint{display:none}
 .sigbox.signed{border-style:solid;border-color:#2e7d32}
+textarea.short{min-height:70px}
