@@ -42,7 +42,7 @@ const obDel = id => run('outbox', 'readwrite', s => s.delete(id));
 
 /* ---------- Būsena ---------- */
 const homeView = role => (role === 'manager' ? 'dash' : role === 'warranty' ? 'wlist' : role === 'driver' ? 'new' : 'list');
-const S = { auth: null, data: null, view: 'login', cur: null, pending: [], syncing: false, err: '', q: '', filter: '', tmpmap: {} };
+const S = { ph: [], auth: null, data: null, view: 'login', cur: null, pending: [], syncing: false, err: '', q: '', filter: '', tmpmap: {} };
 
 /* ---------- Pagalbinės ---------- */
 function sc(st) {
@@ -148,6 +148,8 @@ async function logout(msg) {
 /* ---------- Navigacija ir piešimas ---------- */
 function go(view, cur) {
   S.view = view; S.cur = cur || null;
+  S.ph.forEach(f => { if (f._url) URL.revokeObjectURL(f._url); });
+  S.ph = [];
   say('');
   render();
   window.scrollTo(0, 0);
@@ -333,6 +335,18 @@ function renderDetail() {
 
 }
 
+/** Pasirinktų nuotraukų miniatiūros su šalinimo mygtuku. */
+function paintPhotos() {
+  const box = $('#phi');
+  if (!box) return;
+  box.innerHTML = S.ph.length
+    ? '<div class="thumbs">' + S.ph.map((f, i) => {
+        if (!f._url) f._url = URL.createObjectURL(f);
+        return '<span class="thumb"><img src="' + f._url + '" alt=""><button type="button" data-act="phrm" data-i="' + i + '" aria-label="Pašalinti">×</button></span>';
+      }).join('') + '</div><div>Nuotraukų: ' + S.ph.length + (S.ph.length >= 10 ? ' (daugiau negalima)' : ' · galite pridėti dar') + '</div>'
+    : '';
+}
+
 function shrink(file) {
   return new Promise((ok, bad) => {
     const url = URL.createObjectURL(file);
@@ -359,7 +373,7 @@ async function saveDetail(btn) {
   const mech = $('#mech').value;
   const rwEl = $('#rw');
   const rw = rwEl && rwEl.value !== (it.remontoGarantija || '') ? rwEl.value : '';
-  const files = Array.from($('#ph').files || []);
+  const files = S.ph.slice();
   const prNew = $('#pr').value.trim(), trNew = $('#tr').value.trim(), dpNew = $('#dp') ? $('#dp').value.trim() : '';
   for (const v of [prNew, trNew, dpNew]) {
     const n = moneyNum(v);
@@ -544,7 +558,7 @@ async function submitNew(btn) {
   const need = ['Priėmė', 'Klientas', 'Telefonas', 'Įrenginio tipas', 'Gamintojas', 'Gedimo tipas', 'Gedimo aprašymas (kliento žodžiais)', 'Garantinis?'];
   const miss = need.filter(k => !fields[k]);
   if (miss.length) { toast('Užpildykite: ' + miss.join(', '), 'err'); return; }
-  const files = Array.from($('#ph').files || []);
+  const files = S.ph.slice();
   if (files.length > 10) { toast('Vienu metu galima pridėti iki 10 nuotraukų.', 'err'); return; }
   const drv = S.auth.role === 'driver';
   if (drv && !fields['Kliento adresas']) { toast('Užpildykite: Kliento adresas', 'err'); return; }
@@ -953,6 +967,11 @@ document.addEventListener('click', async ev => {
   if (act === 'scope') { lsSet('scope', el.getAttribute('data-s')); return renderListView(); }
   if (act === 'save') return saveDetail(el);
   if (act === 'submitnew') return submitNew(el);
+  if (act === 'phrm') {
+    const f = S.ph.splice(Number(el.getAttribute('data-i')), 1)[0];
+    if (f && f._url) URL.revokeObjectURL(f._url);
+    return paintPhotos();
+  }
   if (act === 'sigclear') { if (S.sigClear) S.sigClear(); return; }
   if (act === 'sync') { S.err = ''; await sync(); if (!S.err) toast('Sinchronizuota.'); else toast(S.err, 'err'); return; }
   if (act === 'rm') {
@@ -985,8 +1004,10 @@ document.addEventListener('change', ev => {
   if (ev.target.id === 'ws') { wPartsToggle(); return; }
   if (ev.target.id === 'st' && $('#opbox')) { if (/dali/i.test(ev.target.value)) { $('#opbox').classList.remove('hidden'); $('#op').focus(); } return; }
   if (ev.target.id === 'ph') {
-    const n = ev.target.files ? ev.target.files.length : 0;
-    $('#phi').textContent = n ? 'Pasirinkta nuotraukų: ' + n : '';
+    // Nuotraukos kaupiamos: kiekvienas pasirinkimas (ar nufotografavimas) prideda prie esamų
+    Array.from(ev.target.files || []).forEach(f => { if (S.ph.length < 10) S.ph.push(f); });
+    ev.target.value = '';
+    paintPhotos();
   }
 });
 
