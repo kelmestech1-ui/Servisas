@@ -111,3 +111,7 @@ button.newbtn{margin:0 0 10px;background:var(--card);color:var(--fg);border:1px 
 .sigbox.signed .sighint{display:none}
 .sigbox.signed{border-style:solid;border-color:#2e7d32}
 textarea.short{min-height:70px}
+.thumbs{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0}
+.thumb{position:relative;width:72px;height:72px;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.thumb button{position:absolute;top:2px;right:2px;width:24px;height:24px;margin:0;padding:0;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;font-size:16px;line-height:24px}
